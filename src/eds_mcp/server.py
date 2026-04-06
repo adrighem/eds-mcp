@@ -1,6 +1,6 @@
 import logging
 from typing import Optional
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import FastMCP, Message
 
 # Initial setup must happen before imports that might trigger GI loading
 from .env import setup_environment, check_gi_dependencies
@@ -17,12 +17,25 @@ if check_gi_dependencies():
     from .contacts import search_contacts_logic
     from .mail import list_mail_accounts_logic, list_mail_folders_logic, get_emails_logic
 
-    # --- Tool Registration ---
+    # --- Resources ---
 
-    @mcp.tool()
-    async def list_calendars() -> str:
-        """Lists all available calendars in Evolution."""
+    @mcp.resource("eds://calendars")
+    def get_calendars_resource() -> str:
+        """Read the list of available and enabled calendars in Evolution."""
         return list_calendars_logic()
+
+    @mcp.resource("eds://mail/accounts")
+    def get_mail_accounts_resource() -> str:
+        """Read the list of configured and enabled Evolution email accounts."""
+        return list_mail_accounts_logic()
+
+    @mcp.resource("eds://mail/{account_uid}/folders")
+    def get_mail_folders_resource(account_uid: str) -> str:
+        """Read the list of folders for a specific Evolution mail account."""
+        return list_mail_folders_logic(account_uid)
+
+
+    # --- Tools ---
 
     @mcp.tool()
     async def get_calendar_events(
@@ -42,19 +55,33 @@ if check_gi_dependencies():
         return search_contacts_logic(query)
 
     @mcp.tool()
-    async def list_mail_accounts() -> str:
-        """Lists all configured Evolution email accounts and their UIDs."""
-        return list_mail_accounts_logic()
-
-    @mcp.tool()
-    async def list_mail_folders(account_uid: str) -> str:
-        """Lists folders for a specific Evolution mail account."""
-        return list_mail_folders_logic(account_uid)
-
-    @mcp.tool()
     async def get_emails(account_uid: str, folder_name: str = "Inbox", limit: int = 10) -> str:
         """Gets recent emails from a specific folder (defaults to Inbox)."""
         return get_emails_logic(account_uid, folder_name, limit)
+
+
+    # --- Prompts ---
+
+    @mcp.prompt("daily_briefing")
+    def daily_briefing_prompt() -> list[Message]:
+        """A prompt to generate a daily briefing based on the user's agenda."""
+        return [
+            Message(
+                role="user",
+                content="Please use the 'get_calendar_events' tool to fetch my events for today. Then, summarize my schedule. Point out any back-to-back meetings or unusual gaps."
+            )
+        ]
+
+    @mcp.prompt("contact_dossier")
+    def contact_dossier_prompt(name: str) -> list[Message]:
+        """Gather information about a contact."""
+        return [
+            Message(
+                role="user",
+                content=f"Please use the 'search_contacts' tool to look up '{name}'. Provide a summary of their contact details. If you can't find them, let me know."
+            )
+        ]
+
 else:
     logger.error("EDS MCP server starting with degraded functionality due to missing GI dependencies.")
     

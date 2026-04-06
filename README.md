@@ -4,9 +4,19 @@ An MCP server that integrates with the GNOME Evolution Data Server (EDS). This a
 
 ## Features
 
-- **list_calendars**: Show all available calendars.
+### Resources
+- **eds://calendars**: Read all available and enabled calendars.
+- **eds://mail/accounts**: Read all configured and enabled email accounts.
+- **eds://mail/{account_uid}/folders**: Read the list of folders for a specific email account.
+
+### Tools
 - **get_calendar_events**: Retrieve calendar events for the coming days.
 - **search_contacts**: Search for contacts in your Evolution address book.
+- **get_emails**: Retrieve recent emails from a specific folder.
+
+### Prompts
+- **daily_briefing**: A prompt to generate a daily briefing based on the user's agenda.
+- **contact_dossier**: Gather information about a specific contact.
 
 ## Installation & Usage via `uv`
 
