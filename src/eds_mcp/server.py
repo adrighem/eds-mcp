@@ -1,6 +1,6 @@
 import logging
 from typing import Optional
-from mcp.server.fastmcp import FastMCP, Message
+from mcp.server.fastmcp import FastMCP
 
 # Initial setup must happen before imports that might trigger GI loading
 from .env import setup_environment, check_gi_dependencies
@@ -63,24 +63,14 @@ if check_gi_dependencies():
     # --- Prompts ---
 
     @mcp.prompt("daily_briefing")
-    def daily_briefing_prompt() -> list[Message]:
+    def daily_briefing_prompt() -> str:
         """A prompt to generate a daily briefing based on the user's agenda."""
-        return [
-            Message(
-                role="user",
-                content="Please use the 'get_calendar_events' tool to fetch my events for today. Then, summarize my schedule. Point out any back-to-back meetings or unusual gaps."
-            )
-        ]
+        return "Please use the 'get_calendar_events' tool to fetch my events for today. Then, summarize my schedule. Point out any back-to-back meetings or unusual gaps."
 
     @mcp.prompt("contact_dossier")
-    def contact_dossier_prompt(name: str) -> list[Message]:
+    def contact_dossier_prompt(name: str) -> str:
         """Gather information about a contact."""
-        return [
-            Message(
-                role="user",
-                content=f"Please use the 'search_contacts' tool to look up '{name}'. Provide a summary of their contact details. If you can't find them, let me know."
-            )
-        ]
+        return f"Please use the 'search_contacts' tool to look up '{name}'. Provide a summary of their contact details. If you can't find them, let me know."
 
 else:
     logger.error("EDS MCP server starting with degraded functionality due to missing GI dependencies.")
