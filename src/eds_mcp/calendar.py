@@ -107,9 +107,7 @@ def get_calendar_events_logic(
                         all_events.append({
                             "calendar": source.get_display_name(),
                             "summary": summary,
-                            "start": start_str,
-                            "uid": uid,
-                            "is_recurring": False # Hard to tell precisely without occurrence objects, but instance handles it
+                            "start": start_str
                         })
                     except Exception as cb_err:
                         logger.exception(f"Error processing calendar event in '{source.get_display_name()}'")
@@ -122,7 +120,7 @@ def get_calendar_events_logic(
                 continue
 
         all_events.sort(key=lambda x: x['start'])
-        return json.dumps(all_events, indent=2)
+        return json.dumps(all_events, separators=(',', ':'))
     except Exception as e:
         logger.exception("Failed to fetch calendar events")
         return f"Error: {e}"
