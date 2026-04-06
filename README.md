@@ -24,7 +24,7 @@ This project uses `uv` for package management. Because EDS bindings (`PyGObject`
 
 ### 1. Preparing the project
 ```bash
-cd /home/vincent/src/eds-mcp
+cd /path/to/src/eds-mcp
 uv venv --system-site-packages
 source .venv/bin/activate
 uv pip install -e .
@@ -40,7 +40,7 @@ Add the following configuration to your Gemini/Claude config file (usually `~/.c
       "command": "uv",
       "args": [
         "--directory",
-        "/home/vincent/src/eds-mcp",
+        "/path/to/src/eds-mcp",
         "run",
         "eds-mcp"
       ]
