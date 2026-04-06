@@ -31,11 +31,11 @@ def list_mail_accounts_logic() -> str:
         sources = registry.list_sources(EDataServer.SOURCE_EXTENSION_MAIL_ACCOUNT)
         accounts = []
         for source in sources:
-            accounts.append({
-                "uid": source.get_uid(),
-                "display_name": source.get_display_name(),
-                "enabled": source.get_enabled()
-            })
+            if source.get_enabled():
+                accounts.append({
+                    "uid": source.get_uid(),
+                    "name": source.get_display_name()
+                })
         return json.dumps(accounts, indent=2)
     except Exception as e:
         logger.exception("Failed to list mail accounts")

@@ -25,14 +25,11 @@ def list_calendars_logic() -> str:
                 cal_ext = source.get_extension(EDataServer.SOURCE_EXTENSION_CALENDAR)
                 selected = cal_ext.get_selected()
 
-            result.append({
-                "uid": source.get_uid(),
-                "display_name": source.get_display_name(),
-                "enabled": enabled and selected, # User usually cares about what's "checked" in UI
-                "parent": source.get_parent(),
-                "raw_enabled": enabled,
-                "raw_selected": selected
-            })
+            if enabled and selected:
+                result.append({
+                    "uid": source.get_uid(),
+                    "name": source.get_display_name()
+                })
         return json.dumps(result, indent=2)
     except Exception as e:
         logger.exception("Failed to list calendars")
