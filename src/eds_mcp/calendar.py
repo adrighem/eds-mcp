@@ -68,8 +68,8 @@ def get_calendar_events_logic(
 
         # Define time range
         now = datetime.now()
-        start_time = now - timedelta(days=days_back)
-        end_time = now + timedelta(days=days_ahead)
+        start_time = (now - timedelta(days=days_back)).replace(hour=0, minute=0, second=0, microsecond=0)
+        end_time = (now + timedelta(days=days_ahead)).replace(hour=23, minute=59, second=59, microsecond=999999)
         
         # EDS uses timestamps for instance generation
         start_ts = int(start_time.timestamp())
