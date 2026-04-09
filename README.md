@@ -18,6 +18,16 @@ An MCP server that integrates with the GNOME Evolution Data Server (EDS). This a
 - **daily_briefing**: A prompt to generate a daily briefing based on the user's agenda.
 - **contact_dossier**: Gather information about a specific contact.
 
+## Accessing Microsoft Outlook Calendars
+
+This MCP server relies on the GNOME Evolution Data Server (EDS). This means that to access Microsoft Outlook (Exchange or Office 365) calendars and contacts from your Linux system, you need to configure them in GNOME Evolution first:
+
+1. Install GNOME Evolution and `evolution-ews` (the Exchange Web Services plugin).
+2. Open Evolution and add a new account.
+3. Choose "Exchange Web Services" (EWS) or "Outlook" as the server type and log in.
+4. Ensure the calendars and contacts you want to access are enabled in Evolution's sidebar.
+5. Once synced, `eds-mcp` will automatically discover and be able to read these calendars through EDS.
+
 ## Installation & Usage via `uv`
 
 This project uses `uv` for package management. Because EDS bindings (`PyGObject`) often depend on system libraries, we recommend using `uv` in combination with system packages if necessary.

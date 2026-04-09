@@ -1,12 +1,11 @@
 import logging
 import json
-from typing import Optional, List, Dict, Any
 
 # Initial setup must happen before imports that might trigger GI loading
 from .env import setup_environment
 setup_environment()
 
-from gi.repository import EDataServer, EBook, EBookContacts
+from gi.repository import EDataServer, EBook  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +16,8 @@ def search_contacts_logic(query: str) -> str:
         sources = registry.list_sources(EDataServer.SOURCE_EXTENSION_ADDRESS_BOOK)
         all_contacts = []
         for source in sources:
-            if not source.get_enabled(): continue
+            if not source.get_enabled():
+                continue
             try:
                 client = EBook.BookClient.connect_sync(source, 30, None)
                 # SEXP search filter
@@ -30,7 +30,7 @@ def search_contacts_logic(query: str) -> str:
                         "phone": contact.get_property("business-phone"),
                         "source": source.get_display_name()
                     })
-            except Exception as e:
+            except Exception:
                 logger.exception(f"Failed to search address book '{source.get_display_name()}'")
                 continue
         return json.dumps(all_contacts, indent=2)
