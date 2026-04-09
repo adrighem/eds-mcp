@@ -13,7 +13,7 @@ logger = logging.getLogger("eds_mcp")
 mcp = FastMCP("EDS")
 
 if check_gi_dependencies():
-    from .calendar import list_calendars_logic, get_calendar_events_logic
+    from .calendar import list_calendars_logic, get_calendar_events_logic, get_shared_calendar_events_logic
     from .contacts import search_contacts_logic
     from .mail import list_mail_accounts_logic, list_mail_folders_logic, get_emails_logic
 
@@ -48,6 +48,18 @@ if check_gi_dependencies():
         Includes support for recurring events via EDS instance generation.
         """
         return get_calendar_events_logic(days_ahead, days_back, query, calendar_uid)
+
+    @mcp.tool()
+    async def get_shared_calendar_events(
+        query: str,
+        days_ahead: int = 7,
+        days_back: int = 0
+    ) -> str:
+        """Gets calendar events for another user by temporarily adding their shared calendar.
+        If the detailed calendar cannot be read, falls back to Free/Busy information.
+        The 'query' can be an email address or a contact name.
+        """
+        return get_shared_calendar_events_logic(query, days_ahead, days_back)
 
     @mcp.tool()
     async def search_contacts(query: str) -> str:

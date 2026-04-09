@@ -3,13 +3,13 @@ import sqlite3
 import json
 import logging
 from datetime import datetime
-from typing import Optional, List, Dict, Any
+from typing import Optional
 
 # Initial setup must happen before imports that might trigger GI loading
 from .env import setup_environment
 setup_environment()
 
-from gi.repository import EDataServer
+from gi.repository import EDataServer  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +88,7 @@ def get_emails_logic(account_uid: str, folder_name: str = "Inbox", limit: int = 
         for row in cursor.fetchall():
             try:
                 date_str = datetime.fromtimestamp(row[3]).strftime("%Y-%m-%d %H:%M:%S")
-            except:
+            except Exception:
                 date_str = str(row[3])
             
             emails.append({

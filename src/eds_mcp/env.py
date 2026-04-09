@@ -43,7 +43,7 @@ def setup_environment():
         gi.require_version('EBook', '1.2')
         gi.require_version('EBookContacts', '1.2')
         gi.require_version('GLib', '2.0')
-    except (ImportError, ValueError) as e:
+    except (ImportError, ValueError):
         # We don't log here to avoid noise if this is called before logging is set up
         # but we ensure it's available for check_gi_dependencies
         pass
