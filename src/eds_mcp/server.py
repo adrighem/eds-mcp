@@ -15,7 +15,7 @@ mcp = FastMCP("EDS")
 if check_gi_dependencies():
     from .calendar import list_calendars_logic, get_calendar_events_logic, get_shared_calendar_events_logic
     from .contacts import search_contacts_logic
-    from .mail import list_mail_accounts_logic, list_mail_folders_logic, get_emails_logic
+    from .mail import list_mail_accounts_logic, list_mail_folders_logic, get_emails_logic, search_emails_logic
 
     # --- Resources ---
 
@@ -39,9 +39,9 @@ if check_gi_dependencies():
 
     @mcp.tool()
     async def get_calendar_events(
-        days_ahead: int = 7, 
-        days_back: int = 0, 
-        query: Optional[str] = None, 
+        days_ahead: int = 7,
+        days_back: int = 0,
+        query: Optional[str] = None,
         calendar_uid: Optional[str] = None
     ) -> str:
         """Gets calendar events for a date range and optional search query.
@@ -71,6 +71,11 @@ if check_gi_dependencies():
         """Gets recent emails from a specific folder (defaults to Inbox)."""
         return get_emails_logic(account_uid, folder_name, limit)
 
+    @mcp.tool()
+    async def search_emails(account_uid: str, query: str, folder_name: Optional[str] = None, limit: int = 10) -> str:
+        """Searches emails for a specific query across all folders or a specific folder."""
+        return search_emails_logic(account_uid, query, folder_name, limit)
+
 
     # --- Prompts ---
 
@@ -86,7 +91,7 @@ if check_gi_dependencies():
 
 else:
     logger.error("EDS MCP server starting with degraded functionality due to missing GI dependencies.")
-    
+
     @mcp.tool()
     async def system_status() -> str:
         """Returns the system dependency status."""
