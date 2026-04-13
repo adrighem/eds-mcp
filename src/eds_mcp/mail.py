@@ -146,7 +146,7 @@ def search_emails_logic(account_uid: str, query: str, folder_name: Optional[str]
             for row in cursor.fetchall():
                 try:
                     date_str = datetime.fromtimestamp(row[3]).strftime("%Y-%m-%d %H:%M:%S")
-                except:
+                except Exception:
                     date_str = str(row[3])
 
                 emails.append({
