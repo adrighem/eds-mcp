@@ -1,5 +1,6 @@
 import logging
 import json
+import asyncio
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
 
@@ -23,167 +24,208 @@ def ical_time_to_local_string(itt: ICalGLib.Time) -> str:
     except Exception:
         return itt.as_ical_string()
 
-def list_calendars_logic() -> str:
-    """Lists all available calendars in Evolution."""
+def get_component_summary(comp) -> str:
+    """Extracts a human-readable summary from a calendar/task/memo component."""
     try:
-        registry = EDataServer.SourceRegistry.new_sync(None)
-        sources = registry.list_sources(EDataServer.SOURCE_EXTENSION_CALENDAR)
-        result = []
-        for source in sources:
-            enabled = source.get_enabled()
-            selected = False
+        summary_obj = comp.get_summary()
+        if not summary_obj:
+            return "No Summary"
             
-            if source.has_extension(EDataServer.SOURCE_EXTENSION_CALENDAR):
-                cal_ext = source.get_extension(EDataServer.SOURCE_EXTENSION_CALENDAR)
-                selected = cal_ext.get_selected()
+        if hasattr(summary_obj, 'get_value'):
+            return summary_obj.get_value()
+        elif hasattr(summary_obj, 'get_value_as_string'):
+            return summary_obj.get_value_as_string()
+        elif isinstance(summary_obj, ICalGLib.Property):
+            return summary_obj.get_value()
+        else:
+            return str(summary_obj)
+    except Exception:
+        return "Error extracting summary"
 
-            if enabled and selected:
-                result.append({
-                    "uid": source.get_uid(),
-                    "name": source.get_display_name()
-                })
-        return json.dumps(result, indent=2)
-    except Exception as e:
-        logger.exception("Failed to list calendars")
-        return f"Error: {e}"
+async def list_sources_logic(source_type: ECal.ClientSourceType) -> str:
+    """Lists all available sources for a given type (Calendar, Tasks, or Memos)."""
+    def _logic():
+        try:
+            registry = EDataServer.SourceRegistry.new_sync(None)
+            extension = {
+                ECal.ClientSourceType.EVENTS: EDataServer.SOURCE_EXTENSION_CALENDAR,
+                ECal.ClientSourceType.TASKS: EDataServer.SOURCE_EXTENSION_TASK_LIST,
+                ECal.ClientSourceType.MEMOS: EDataServer.SOURCE_EXTENSION_MEMO_LIST
+            }[source_type]
+            
+            sources = registry.list_sources(extension)
+            result = []
+            for source in sources:
+                if source.get_enabled():
+                    result.append({
+                        "uid": source.get_uid(),
+                        "name": source.get_display_name()
+                    })
+            return json.dumps(result, indent=2)
+        except Exception as e:
+            logger.exception(f"Failed to list sources for {source_type}")
+            return f"Error: {e}"
+            
+    return await asyncio.to_thread(_logic)
 
-def get_calendar_events_logic(
+async def get_items_logic(
+    source_type: ECal.ClientSourceType,
     days_ahead: int = 7, 
     days_back: int = 0, 
     query: Optional[str] = None, 
-    calendar_uid: Optional[str] = None
+    uid: Optional[str] = None
 ) -> str:
-    """Gets calendar events for a date range and optional search query."""
-    try:
-        registry = EDataServer.SourceRegistry.new_sync(None)
-        target_sources = []
-        if calendar_uid:
-            source = registry.ref_source(calendar_uid)
-            if source:
-                target_sources.append(source)
-            else:
-                logger.warning(f"Could not find calendar with UID: {calendar_uid}")
-        else:
-            sources = registry.list_sources(EDataServer.SOURCE_EXTENSION_CALENDAR)
-            for source in sources:
-                enabled = source.get_enabled()
-                selected = False
-                if source.has_extension(EDataServer.SOURCE_EXTENSION_CALENDAR):
-                    cal_ext = source.get_extension(EDataServer.SOURCE_EXTENSION_CALENDAR)
-                    selected = cal_ext.get_selected()
-                
-                if enabled and selected:
+    """Generic logic to fetch items (Events, Tasks, or Memos) for a date range."""
+    def _logic():
+        try:
+            registry = EDataServer.SourceRegistry.new_sync(None)
+            extension = {
+                ECal.ClientSourceType.EVENTS: EDataServer.SOURCE_EXTENSION_CALENDAR,
+                ECal.ClientSourceType.TASKS: EDataServer.SOURCE_EXTENSION_TASK_LIST,
+                ECal.ClientSourceType.MEMOS: EDataServer.SOURCE_EXTENSION_MEMO_LIST
+            }[source_type]
+            
+            target_sources = []
+            if uid:
+                source = registry.ref_source(uid)
+                if source:
                     target_sources.append(source)
-        
-        if not target_sources:
-            return "Error: No enabled calendar sources found."
+            else:
+                sources = registry.list_sources(extension)
+                for source in sources:
+                    if source.get_enabled():
+                        target_sources.append(source)
+            
+            if not target_sources:
+                return f"Error: No enabled sources found for {extension}."
 
-        # Define time range
-        now = datetime.now()
-        start_time = (now - timedelta(days=days_back)).replace(hour=0, minute=0, second=0, microsecond=0)
-        end_time = (now + timedelta(days=days_ahead)).replace(hour=23, minute=59, second=59, microsecond=999999)
-        
-        # EDS uses timestamps for instance generation
-        start_ts = int(start_time.timestamp())
-        end_ts = int(end_time.timestamp())
+            # Define time range
+            now = datetime.now()
+            start_time = (now - timedelta(days=days_back)).replace(hour=0, minute=0, second=0, microsecond=0)
+            end_time = (now + timedelta(days=days_ahead)).replace(hour=23, minute=59, second=59, microsecond=999999)
+            
+            start_ts = int(start_time.timestamp())
+            end_ts = int(end_time.timestamp())
 
-        all_events = []
-        for source in target_sources:
-            try:
-                client = ECal.Client.connect_sync(source, ECal.ClientSourceType.EVENTS, 30, None)
-                
-                # Generate all instances (including recurring) within the time range
-                def _actual_cb(comp, start, end, data, cancellable):
-                    try:
-                        summary_obj = comp.get_summary()
-                        if hasattr(summary_obj, 'get_value'):
-                            summary = summary_obj.get_value()
-                        elif hasattr(summary_obj, 'get_value_as_string'):
-                            summary = summary_obj.get_value_as_string()
-                        elif isinstance(summary_obj, ICalGLib.Property):
-                            summary = summary_obj.get_value()
-                        else:
-                            summary = str(summary_obj) if summary_obj else "No Summary"
-                            
+            all_items = []
+            for source in target_sources:
+                try:
+                    client = ECal.Client.connect_sync(source, source_type, 30, None)
+                    
+                    def _actual_cb(comp, start, end, data, cancellable):
+                        summary = get_component_summary(comp)
                         if query and query.lower() not in summary.lower():
                             return True
                             
-                        all_events.append({
-                            "calendar": source.get_display_name(),
+                        item = {
+                            "source": source.get_display_name(),
                             "summary": summary,
                             "start": ical_time_to_local_string(start),
                             "end": ical_time_to_local_string(end)
-                        })
-                    except Exception:
-                        logger.exception(f"Error processing calendar event in '{source.get_display_name()}'")
-                    return True
+                        }
+                        
+                        # Add task specific fields
+                        if source_type == ECal.ClientSourceType.TASKS:
+                            # Percent complete
+                            prop = comp.get_first_property(ICalGLib.PropertyKind.PERCENTCOMPLETE_PROPERTY)
+                            if prop:
+                                item["percent_complete"] = prop.get_percentcomplete()
+                        
+                        all_items.append(item)
+                        return True
 
-                client.generate_instances_sync(start_ts, end_ts, None, _actual_cb, None)
-                
-            except Exception:
-                logger.exception(f"Failed to process calendar source '{source.get_display_name()}'")
-                continue
-
-        all_events.sort(key=lambda x: x['start'])
-        return json.dumps(all_events, separators=(',', ':'))
-    except Exception as e:
-        logger.exception("Failed to fetch calendar events")
-        return f"Error: {e}"
-
-def get_free_busy_logic(email: str, days_ahead: int, days_back: int, primary_cal_uid: str) -> List[Dict[str, Any]]:
-    """Fetches free/busy information for a given email address using ICalGLib for parsing."""
-    try:
-        registry = EDataServer.SourceRegistry.new_sync(None)
-        source = registry.ref_source(primary_cal_uid)
-        if not source:
-            return []
-            
-        client = ECal.Client.connect_sync(source, ECal.ClientSourceType.EVENTS, 30, None)
-        
-        now = datetime.now()
-        start_time = (now - timedelta(days=days_back)).replace(hour=0, minute=0, second=0, microsecond=0)
-        end_time = (now + timedelta(days=days_ahead)).replace(hour=23, minute=59, second=59, microsecond=999999)
-        
-        start_ts = int(start_time.timestamp())
-        end_ts = int(end_time.timestamp())
-        
-        success, components = client.get_free_busy_sync(start_ts, end_ts, [email], None)
-        
-        fb_events = []
-        for comp in components:
-            ical_comp = comp.get_icalcomponent()
-            prop = ical_comp.get_first_property(ICalGLib.PropertyKind.FREEBUSY_PROPERTY)
-            while prop:
-                fb = prop.get_freebusy()
-                if fb:
-                    fb_type_param = prop.get_first_parameter(ICalGLib.ParameterKind.FBTYPE_PARAMETER)
-                    fb_type = "Busy"
-                    if fb_type_param:
-                        fb_enum = fb_type_param.get_fbtype()
-                        if fb_enum == ICalGLib.ParameterFbtype.BUSY:
-                            fb_type = "Busy"
-                        elif fb_enum == ICalGLib.ParameterFbtype.BUSYTENTATIVE:
-                            fb_type = "Busy (Tentative)"
-                        elif fb_enum == ICalGLib.ParameterFbtype.BUSYUNAVAILABLE:
-                            fb_type = "Busy (Unavailable)"
-                        elif fb_enum == ICalGLib.ParameterFbtype.FREE:
-                            fb_type = "Free"
-                        else:
-                            fb_type = str(fb_enum)
+                    client.generate_instances_sync(start_ts, end_ts, None, _actual_cb, None)
                     
-                    fb_events.append({
-                        "calendar": f"Free/Busy ({email})",
-                        "summary": fb_type,
-                        "start": ical_time_to_local_string(fb.get_start()),
-                        "end": ical_time_to_local_string(fb.get_end())
-                    })
-                prop = ical_comp.get_next_property(ICalGLib.PropertyKind.FREEBUSY_PROPERTY)
-        return fb_events
-    except Exception:
-        logger.exception(f"Failed to fetch free/busy for {email}")
-        return []
+                except Exception:
+                    logger.exception(f"Failed to process source '{source.get_display_name()}'")
+                    continue
 
-def get_shared_calendar_events_logic(
+            all_items.sort(key=lambda x: x['start'])
+            return json.dumps(all_items, separators=(',', ':'))
+        except Exception as e:
+            logger.exception("Failed to fetch items")
+            return f"Error: {e}"
+
+    return await asyncio.to_thread(_logic)
+
+# Specific wrappers for the existing functions to maintain compatibility and clarity
+async def list_calendars_logic() -> str:
+    return await list_sources_logic(ECal.ClientSourceType.EVENTS)
+
+async def get_calendar_events_logic(days_ahead=7, days_back=0, query=None, calendar_uid=None) -> str:
+    return await get_items_logic(ECal.ClientSourceType.EVENTS, days_ahead, days_back, query, calendar_uid)
+
+async def list_tasks_logic() -> str:
+    return await list_sources_logic(ECal.ClientSourceType.TASKS)
+
+async def get_tasks_logic(days_ahead=30, days_back=30, query=None, task_list_uid=None) -> str:
+    return await get_items_logic(ECal.ClientSourceType.TASKS, days_ahead, days_back, query, task_list_uid)
+
+async def list_memos_logic() -> str:
+    return await list_sources_logic(ECal.ClientSourceType.MEMOS)
+
+async def get_memos_logic(query=None, memo_list_uid=None) -> str:
+    # Memos don't usually have a meaningful start/end date range in the same way, 
+    # but we use a large range to catch them.
+    return await get_items_logic(ECal.ClientSourceType.MEMOS, days_ahead=365, days_back=365, query=query, uid=memo_list_uid)
+
+async def get_free_busy_logic(email: str, days_ahead: int, days_back: int, primary_cal_uid: str) -> List[Dict[str, Any]]:
+    """Fetches free/busy information for a given email address using ICalGLib for parsing."""
+    def _logic():
+        try:
+            registry = EDataServer.SourceRegistry.new_sync(None)
+            source = registry.ref_source(primary_cal_uid)
+            if not source:
+                return []
+                
+            client = ECal.Client.connect_sync(source, ECal.ClientSourceType.EVENTS, 30, None)
+            
+            now = datetime.now()
+            start_time = (now - timedelta(days=days_back)).replace(hour=0, minute=0, second=0, microsecond=0)
+            end_time = (now + timedelta(days=days_ahead)).replace(hour=23, minute=59, second=59, microsecond=999999)
+            
+            start_ts = int(start_time.timestamp())
+            end_ts = int(end_time.timestamp())
+            
+            success, components = client.get_free_busy_sync(start_ts, end_ts, [email], None)
+            
+            fb_events = []
+            for comp in components:
+                ical_comp = comp.get_icalcomponent()
+                prop = ical_comp.get_first_property(ICalGLib.PropertyKind.FREEBUSY_PROPERTY)
+                while prop:
+                    fb = prop.get_freebusy()
+                    if fb:
+                        fb_type_param = prop.get_first_parameter(ICalGLib.ParameterKind.FBTYPE_PARAMETER)
+                        fb_type = "Busy"
+                        if fb_type_param:
+                            fb_enum = fb_type_param.get_fbtype()
+                            if fb_enum == ICalGLib.ParameterFbtype.BUSY:
+                                fb_type = "Busy"
+                            elif fb_enum == ICalGLib.ParameterFbtype.BUSYTENTATIVE:
+                                fb_type = "Busy (Tentative)"
+                            elif fb_enum == ICalGLib.ParameterFbtype.BUSYUNAVAILABLE:
+                                fb_type = "Busy (Unavailable)"
+                            elif fb_enum == ICalGLib.ParameterFbtype.FREE:
+                                fb_type = "Free"
+                            else:
+                                fb_type = str(fb_enum)
+                        
+                        fb_events.append({
+                            "calendar": f"Free/Busy ({email})",
+                            "summary": fb_type,
+                            "start": ical_time_to_local_string(fb.get_start()),
+                            "end": ical_time_to_local_string(fb.get_end())
+                        })
+                    prop = ical_comp.get_next_property(ICalGLib.PropertyKind.FREEBUSY_PROPERTY)
+            return fb_events
+        except Exception:
+            logger.exception(f"Failed to fetch free/busy for {email}")
+            return []
+
+    return await asyncio.to_thread(_logic)
+
+async def get_shared_calendar_events_logic(
     query: str,
     days_ahead: int = 7,
     days_back: int = 0
@@ -193,7 +235,7 @@ def get_shared_calendar_events_logic(
     email = query
     if "@" not in query:
         from .contacts import search_contacts_logic
-        contacts_json = search_contacts_logic(query)
+        contacts_json = await search_contacts_logic(query)
         contacts = json.loads(contacts_json)
         if contacts and contacts[0].get("emails"):
             email = contacts[0]["emails"][0]
@@ -201,35 +243,65 @@ def get_shared_calendar_events_logic(
             return json.dumps({"error": f"Could not find email for '{query}'"})
 
     # 2. Find primary calendar to use its connection
-    registry = EDataServer.SourceRegistry.new_sync(None)
-    sources = registry.list_sources(None)
-    ews_parent_uid = None
-    primary_cal_uid = None
-    
-    for s in sources:
-        if s.has_extension(EDataServer.SOURCE_EXTENSION_COLLECTION):
-            coll = s.get_extension(EDataServer.SOURCE_EXTENSION_COLLECTION)
-            if coll.get_backend_name() == 'ews':
-                ews_parent_uid = s.get_uid()
+    def _find_primary():
+        registry = EDataServer.SourceRegistry.new_sync(None)
+        sources = registry.list_sources(None)
+        ews_parent_uid = None
+        primary_cal_uid = None
+        
+        for s in sources:
+            if s.has_extension(EDataServer.SOURCE_EXTENSION_COLLECTION):
+                coll = s.get_extension(EDataServer.SOURCE_EXTENSION_COLLECTION)
+                if coll.get_backend_name() == 'ews':
+                    ews_parent_uid = s.get_uid()
+                    break
+        
+        if not ews_parent_uid:
+            return None, "No EWS account found to support free/busy queries."
+
+        for s in sources:
+            if s.get_parent() == ews_parent_uid and s.get_display_name() == 'Calendar':
+                primary_cal_uid = s.get_uid()
                 break
+
+        if not primary_cal_uid:
+            return None, "Could not find primary calendar for EWS connection."
+            
+        return primary_cal_uid, None
+
+    res = await asyncio.to_thread(_find_primary)
+    if isinstance(res, tuple) and res[1]:
+        return json.dumps({"error": res[1]})
     
-    if not ews_parent_uid:
-        return json.dumps({"error": "No EWS account found to support free/busy queries."})
-
-    for s in sources:
-        if s.get_parent() == ews_parent_uid and s.get_display_name() == 'Calendar':
-            primary_cal_uid = s.get_uid()
-            break
-
-    if not primary_cal_uid:
-        return json.dumps({"error": "Could not find primary calendar for EWS connection."})
+    primary_cal_uid = res
 
     try:
         # We use the primary account's connection to query Free/Busy for any organizational user.
-        # This avoids adding temporary sources or restarting services.
-        all_events = get_free_busy_logic(email, days_ahead, days_back, primary_cal_uid)
+        all_events = await get_free_busy_logic(email, days_ahead, days_back, primary_cal_uid)
         return json.dumps(all_events, separators=(',', ':'))
 
     except Exception as e:
         logger.exception("Error in get_shared_calendar_events_logic")
         return json.dumps({"error": str(e)})
+
+
+async def create_calendar_event_logic(calendar_uid: str, ical_data: str) -> str:
+    """Creates a new calendar event using the D-Bus interface."""
+    try:
+        from gi.repository import Gio, GLib
+        from .mail import EVOLUTION_BUS_NAME, EVOLUTION_OBJECT_PATH, EVOLUTION_INTERFACE_NAME
+        
+        bus = await Gio.bus_get(Gio.BusType.SESSION, None)
+        proxy = await Gio.DBusProxy.new(bus, Gio.DBusProxyFlags.NONE, None, EVOLUTION_BUS_NAME, EVOLUTION_OBJECT_PATH, EVOLUTION_INTERFACE_NAME, None)
+
+        # Call CreateEvent(calendar_uid, ical_data)
+        result = await proxy.call(
+            "CreateEvent",
+            GLib.Variant('(ss)', (calendar_uid, ical_data)),
+            Gio.DBusCallFlags.NONE, -1, None
+        )
+        success, message = result.unpack()
+        return f"{'Successfully' if success else 'Failed to'} create event: {message}"
+    except Exception as e:
+        logger.error(f"D-Bus create event failed: {e}")
+        return f"Error: {e}. Ensure the custom instrumentation plugin supports 'CreateEvent'."
