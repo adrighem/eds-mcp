@@ -39,16 +39,36 @@ def setup_environment():
     try:
         import gi
         gi.require_version('EDataServer', '1.2')
+        gi.require_version('Camel', '1.2')
+        gi.require_version('Secret', '1')
         gi.require_version('ECal', '2.0')
         gi.require_version('EBook', '1.2')
         gi.require_version('EBookContacts', '1.2')
         gi.require_version('GLib', '2.0')
+        gi.require_version('Gio', '2.0')
     except (ImportError, ValueError):
         # We don't log here to avoid noise if this is called before logging is set up
         # but we ensure it's available for check_gi_dependencies
         pass
 
-    # 4. Configure basic logging
+    # 4. Set CAMEL_PROVIDER_DIR if it's in the expected location
+    camel_provider_paths = [
+        "/usr/lib/evolution-data-server/camel-providers",
+        "/usr/lib/x86_64-linux-gnu/evolution-data-server/camel-providers",
+        "/usr/lib64/evolution-data-server/camel-providers"
+    ]
+    for path in camel_provider_paths:
+        if os.path.exists(path):
+            os.environ["CAMEL_PROVIDER_DIR"] = path
+            break
+
+    try:
+        from gi.repository import Camel
+        Camel.provider_init()
+    except Exception:
+        pass
+
+    # 5. Configure basic logging
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -60,10 +80,13 @@ def check_gi_dependencies():
     try:
         import gi
         gi.require_version('EDataServer', '1.2')
+        gi.require_version('Camel', '1.2')
+        gi.require_version('Secret', '1')
         gi.require_version('ECal', '2.0')
         gi.require_version('EBook', '1.2')
         gi.require_version('EBookContacts', '1.2')
         gi.require_version('GLib', '2.0')
+        gi.require_version('Gio', '2.0')
         return True
     except Exception as e:
         logging.error(f"Missing system dependencies (PyGObject/EDS): {e}")

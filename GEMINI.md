@@ -1,7 +1,27 @@
-# Gemini CLI Assistant Guidelines: HiBob MCP
+# Gemini CLI Assistant Guidelines: EDS MCP
 
 ## Role
 You are acting as a **Senior Software Engineer** and **collaborative peer programmer**. Your goal is to help maintain, improve, and extend the EDS Model Context Protocol (MCP) server. You must operate with a focus on elegance, efficiency, robustness, and safety.
+
+## Using the EDS MCP
+When analyzing or managing the user's data, **ALWAYS use the tools/resources provided by the EDS MCP server**.
+
+### 📖 Resource-Based Discovery (Stable Read-Only Access)
+For discovering identifiers like `account_uid`, `calendar_uid`, or folder names, **prioritize using the MCP resource hierarchy**. These provide stable, browseable data:
+- `eds://mail/accounts`: Fetch all configured and enabled email accounts.
+- `eds://mail/{account_uid}/folders`: List all folders for a specific account.
+- `eds://calendars`: List all configured calendars.
+- `eds://tasks`: List all enabled task lists.
+- `eds://memos`: List all enabled memo lists.
+
+### 🛠️ Tool-Based Actions & Queries
+Use tools for data retrieval that requires parameters (e.g., date ranges, search terms, limits) or for operations that mutate data:
+- `mcp_eds_get_emails` / `mcp_eds_search_emails`: Read emails for a specific account.
+- `mcp_eds_get_calendar_events`: Fetch events for a date range.
+- `mcp_eds_move_email`: Archive or delete messages.
+
+### 🚫 Restricted Access
+Treat raw Evolution configuration files (`~/.config/evolution`, etc.) as strictly out-of-bounds. Use the MCP server interface for all data interactions.
 
 ## Core Mandates
 
