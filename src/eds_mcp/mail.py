@@ -14,10 +14,10 @@ from gi.repository import EDataServer, Camel, Secret, GLib, Gio  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
-# D-Bus configuration for Evolution Custom Instrumentation plugin
+# D-Bus configuration for Evolution MCP Automation Bridge plugin
 EVOLUTION_BUS_NAME = "org.gnome.Evolution"
-EVOLUTION_OBJECT_PATH = "/org/gnome/evolution/CustomInstrumentation"
-EVOLUTION_INTERFACE_NAME = "org.gnome.Evolution.CustomInstrumentation"
+EVOLUTION_OBJECT_PATH = "/org/gnome/evolution/McpAutomationBridge"
+EVOLUTION_INTERFACE_NAME = "org.gnome.Evolution.McpAutomationBridge"
 
 def get_mail_db_path(account_uid: str) -> Optional[str]:
     """Resolves the SQLite database path for a given Evolution mail account."""
@@ -218,105 +218,122 @@ async def get_email_body_logic(account_uid: str, message_uid: str, folder_name: 
 
     return await asyncio.to_thread(_logic)
 
+
+def get_dbus_proxy():
+    from gi.repository import Gio
+    bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+    proxy = Gio.DBusProxy.new_sync(
+        bus,
+        Gio.DBusProxyFlags.NONE,
+        None,
+        EVOLUTION_BUS_NAME,
+        EVOLUTION_OBJECT_PATH,
+        EVOLUTION_INTERFACE_NAME,
+        None
+    )
+    if proxy.get_name_owner() is None:
+        raise Exception("Evolution is not running or the MCP automation bridge plugin is disabled. Please start Evolution first.")
+    return proxy
+
 async def move_email_logic(account_uid: str, message_uid: str, source_folder: str, dest_folder: str) -> str:
     """
     Moves an email using the Evolution extension D-Bus interface.
     
-    This requires the 'evolution-custominstrumentation' plugin to be active in Evolution.
+    This requires the 'evolution-mcp-automation-bridge' plugin to be active in Evolution.
     """
-    try:
-        from gi.repository import Gio, GLib
-        
-        # Connect to the session bus
-        bus = await Gio.bus_get(Gio.BusType.SESSION, None)
-        
-        # Create a proxy for the custom instrumentation interface
-        proxy = await Gio.DBusProxy.new(
-            bus,
-            Gio.DBusProxyFlags.NONE,
-            None,
-            EVOLUTION_BUS_NAME,
-            EVOLUTION_OBJECT_PATH,
-            EVOLUTION_INTERFACE_NAME,
-            None
-        )
+    def _logic():
+        try:
+            from gi.repository import GLib
+            proxy = get_dbus_proxy()
 
-        # Call MoveMessage(account_uid, message_uid, source_folder, dest_folder)
-        # Returns (success: boolean, message: string)
-        result = await proxy.call(
-            "MoveMessage",
-            GLib.Variant('(ssss)', (account_uid, message_uid, source_folder, dest_folder)),
-            Gio.DBusCallFlags.NONE,
-            -1,
-            None
-        )
-        
-        success, message = result.unpack()
-        if success:
-            return f"Successfully moved email: {message}"
-        else:
-            return f"Failed to move email: {message}"
+            # Call MoveMessage(account_uid, message_uid, source_folder, dest_folder)
+            # Returns (success: boolean, message: string)
+            result = proxy.call_sync(
+                "MoveMessage",
+                GLib.Variant('(ssss)', (account_uid, message_uid, source_folder, dest_folder)),
+                Gio.DBusCallFlags.NONE,
+                -1,
+                None
+            )
+            
+            success, message = result.unpack()
+            if success:
+                return f"Successfully moved email: {message}"
+            else:
+                return f"Failed to move email: {message}"
 
-    except Exception as e:
-        logger.error(f"D-Bus move failed: {e}")
-        return f"Error: Failed to move email via Evolution D-Bus. Ensure Evolution is running with the custom instrumentation plugin. Details: {e}"
+        except Exception as e:
+            logger.error(f"D-Bus move failed: {e}")
+            return f"Error: Failed to move email via Evolution D-Bus. Ensure Evolution is running with the MCP automation bridge plugin. Details: {e}"
+
+    return await asyncio.to_thread(_logic)
 
 async def mark_as_read_logic(account_uid: str, message_uid: str, folder_name: str, read: bool = True) -> str:
     """Marks an email as read or unread using the D-Bus interface."""
-    try:
-        from gi.repository import Gio, GLib
-        bus = await Gio.bus_get(Gio.BusType.SESSION, None)
-        proxy = await Gio.DBusProxy.new(bus, Gio.DBusProxyFlags.NONE, None, EVOLUTION_BUS_NAME, EVOLUTION_OBJECT_PATH, EVOLUTION_INTERFACE_NAME, None)
+    def _logic():
+        try:
+            from gi.repository import GLib
+            proxy = get_dbus_proxy()
 
-        # Call MarkAsRead(account_uid, message_uid, folder_name, read)
-        result = await proxy.call(
-            "MarkAsRead",
-            GLib.Variant('(sssb)', (account_uid, message_uid, folder_name, read)),
-            Gio.DBusCallFlags.NONE, -1, None
-        )
-        success, message = result.unpack()
-        return f"{'Successfully' if success else 'Failed to'} mark as {'read' if read else 'unread'}: {message}"
-    except Exception as e:
-        logger.error(f"D-Bus mark as read failed: {e}")
-        return f"Error: {e}. Ensure the custom instrumentation plugin supports 'MarkAsRead'."
+            # Call MarkAsRead(account_uid, message_uid, folder_name, read)
+            result = proxy.call_sync(
+                "MarkAsRead",
+                GLib.Variant('(sssb)', (account_uid, message_uid, folder_name, read)),
+                Gio.DBusCallFlags.NONE, -1, None
+            )
+            success, message = result.unpack()
+            return f"{'Successfully' if success else 'Failed to'} mark as {'read' if read else 'unread'}: {message}"
+        except Exception as e:
+            logger.error(f"D-Bus mark as read failed: {e}")
+            return f"Error: {e}. Ensure the MCP automation bridge plugin supports 'MarkAsRead'."
+
+    return await asyncio.to_thread(_logic)
 
 async def delete_message_logic(account_uid: str, message_uid: str, folder_name: str) -> str:
     """Deletes an email using the D-Bus interface."""
-    try:
-        from gi.repository import Gio, GLib
-        bus = await Gio.bus_get(Gio.BusType.SESSION, None)
-        proxy = await Gio.DBusProxy.new(bus, Gio.DBusProxyFlags.NONE, None, EVOLUTION_BUS_NAME, EVOLUTION_OBJECT_PATH, EVOLUTION_INTERFACE_NAME, None)
+    def _logic():
+        try:
+            from gi.repository import GLib
+            proxy = get_dbus_proxy()
 
-        # Call DeleteMessage(account_uid, message_uid, folder_name)
-        result = await proxy.call(
-            "DeleteMessage",
-            GLib.Variant('(sss)', (account_uid, message_uid, folder_name)),
-            Gio.DBusCallFlags.NONE, -1, None
-        )
-        success, message = result.unpack()
-        return f"{'Successfully' if success else 'Failed to'} delete message: {message}"
-    except Exception as e:
-        logger.error(f"D-Bus delete failed: {e}")
-        return f"Error: {e}. Ensure the custom instrumentation plugin supports 'DeleteMessage'."
+            # Call DeleteMessage(account_uid, message_uid, folder_name)
+            result = proxy.call_sync(
+                "DeleteMessage",
+                GLib.Variant('(sss)', (account_uid, message_uid, folder_name)),
+                Gio.DBusCallFlags.NONE, -1, None
+            )
+            success, message = result.unpack()
+            return f"{'Successfully' if success else 'Failed to'} delete message: {message}"
+        except Exception as e:
+            logger.error(f"D-Bus delete failed: {e}")
+            return f"Error: {e}. Ensure the MCP automation bridge plugin supports 'DeleteMessage'."
+
+    return await asyncio.to_thread(_logic)
 
 async def send_mail_logic(account_uid: str, to: str, subject: str, body: str) -> str:
     """Sends an email using the D-Bus interface."""
-    try:
-        from gi.repository import Gio, GLib
-        bus = await Gio.bus_get(Gio.BusType.SESSION, None)
-        proxy = await Gio.DBusProxy.new(bus, Gio.DBusProxyFlags.NONE, None, EVOLUTION_BUS_NAME, EVOLUTION_OBJECT_PATH, EVOLUTION_INTERFACE_NAME, None)
+    def _logic():
+        try:
+            from gi.repository import GLib
+            proxy = get_dbus_proxy()
 
-        # Call SendMail(account_uid, to, subject, body)
-        result = await proxy.call(
-            "SendMail",
-            GLib.Variant('(ssss)', (account_uid, to, subject, body)),
-            Gio.DBusCallFlags.NONE, -1, None
-        )
-        success, message = result.unpack()
-        return f"{'Successfully sent' if success else 'Failed to send'} mail: {message}"
-    except Exception as e:
-        logger.error(f"D-Bus send failed: {e}")
-        return f"Error: {e}. Ensure the custom instrumentation plugin supports 'SendMail'."
+            # Call SendMail(account_uid, to, subject, body)
+            result = proxy.call_sync(
+                "SendMail",
+                GLib.Variant('(ssss)', (account_uid, to, subject, body)),
+                Gio.DBusCallFlags.NONE, -1, None
+            )
+            success, message = result.unpack()
+            return f"{'Successfully sent' if success else 'Failed to send'} mail: {message}"
+        except Exception as e:
+            logger.error(f"D-Bus send failed: {e}")
+            return f"Error: {e}. Ensure the MCP automation bridge plugin supports 'SendMail'."
+
+    return await asyncio.to_thread(_logic)
+
+
+
+)
 
 
 
