@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<e-plugin-list>
+  <e-plugin
+    type="shlib"
+    id="org.gnome.evolution.custom-instrumentation"
+    name="MCP Automation Bridge"
+    _name="MCP Automation Bridge"
+    location="@PLUGINDIR@/libevolution-mcp-automation-bridge@SOEXT@">
+
+    <description>Exposes Evolution functionality via D-Bus for the eds-mcp server.</description>
+    <_description>Exposes Evolution functionality via D-Bus for the eds-mcp server.</_description>
+
+    <author name="Vincent" email="vincent@example.com"/>
+
+    <hook class="org.gnome.evolution.ui:1.0">
+      <ui-manager id="org.gnome.evolution.mail"/>
+      <ui-manager id="org.gnome.evolution.mail.browser"/>
+    </hook>
+  </e-plugin>
+</e-plugin-list>
