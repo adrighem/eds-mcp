@@ -287,21 +287,23 @@ async def get_shared_calendar_events_logic(
 
 async def create_calendar_event_logic(calendar_uid: str, ical_data: str) -> str:
     """Creates a new calendar event using the D-Bus interface."""
-    try:
-        from gi.repository import Gio, GLib
-        from .mail import EVOLUTION_BUS_NAME, EVOLUTION_OBJECT_PATH, EVOLUTION_INTERFACE_NAME
-        
-        bus = await Gio.bus_get(Gio.BusType.SESSION, None)
-        proxy = await Gio.DBusProxy.new(bus, Gio.DBusProxyFlags.NONE, None, EVOLUTION_BUS_NAME, EVOLUTION_OBJECT_PATH, EVOLUTION_INTERFACE_NAME, None)
+    def _logic():
+        try:
+            from gi.repository import GLib
+            from .mail import get_dbus_proxy
+            
+            proxy = get_dbus_proxy()
 
-        # Call CreateEvent(calendar_uid, ical_data)
-        result = await proxy.call(
-            "CreateEvent",
-            GLib.Variant('(ss)', (calendar_uid, ical_data)),
-            Gio.DBusCallFlags.NONE, -1, None
-        )
-        success, message = result.unpack()
-        return f"{'Successfully' if success else 'Failed to'} create event: {message}"
-    except Exception as e:
-        logger.error(f"D-Bus create event failed: {e}")
-        return f"Error: {e}. Ensure the custom instrumentation plugin supports 'CreateEvent'."
+            # Call CreateEvent(calendar_uid, ical_data)
+            result = proxy.call_sync(
+                "CreateEvent",
+                GLib.Variant('(ss)', (calendar_uid, ical_data)),
+                Gio.DBusCallFlags.NONE, -1, None
+            )
+            success, message = result.unpack()
+            return f"{'Successfully' if success else 'Failed to'} create event: {message}"
+        except Exception as e:
+            logger.error(f"D-Bus create event failed: {e}")
+            return f"Error: {e}. Ensure the MCP automation bridge plugin supports 'CreateEvent'."
+
+    return await asyncio.to_thread(_logic)
