@@ -11,6 +11,9 @@ An MCP server that integrates with the GNOME Evolution Data Server (EDS). This a
 
 ### Tools
 - **get_calendar_events**: Retrieve calendar events for the coming days.
+- **create_calendar_event**: Create a new event in a specific calendar.
+- **update_calendar_event**: Update the summary or description of an existing calendar event.
+- **delete_calendar_event**: Delete an event or a specific recurrence from a calendar.
 - **search_contacts**: Search for contacts in your Evolution address book.
 - **get_emails**: Retrieve recent emails from a specific folder.
 

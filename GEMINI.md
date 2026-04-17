@@ -18,6 +18,7 @@ For discovering identifiers like `account_uid`, `calendar_uid`, or folder names,
 Use tools for data retrieval that requires parameters (e.g., date ranges, search terms, limits) or for operations that mutate data:
 - `mcp_eds_get_emails` / `mcp_eds_search_emails`: Read emails for a specific account.
 - `mcp_eds_get_calendar_events`: Fetch events for a date range.
+- `mcp_eds_create_calendar_event` / `mcp_eds_update_calendar_event` / `mcp_eds_delete_calendar_event`: Create, modify, and delete calendar events.
 - `mcp_eds_move_email`: Archive or delete messages.
 
 ### 🚫 Restricted Access

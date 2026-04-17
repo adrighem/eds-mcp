@@ -32,7 +32,7 @@ if check_gi_dependencies():
     from .calendar import (
         list_calendars_logic, get_calendar_events_logic, get_shared_calendar_events_logic,
         list_tasks_logic, get_tasks_logic, list_memos_logic, get_memos_logic,
-        create_calendar_event_logic
+        create_calendar_event_logic, delete_calendar_event_logic, update_calendar_event_logic
     )
     from .contacts import search_contacts_logic
     from .mail import (
@@ -102,6 +102,22 @@ if check_gi_dependencies():
     async def create_calendar_event(calendar_uid: str, ical_data: str) -> str:
         """Creates a new calendar event in Evolution."""
         return await create_calendar_event_logic(calendar_uid, ical_data)
+
+    @mcp.tool()
+    async def delete_calendar_event(calendar_uid: str, event_uid: str, event_rid: Optional[str] = None) -> str:
+        """Deletes a calendar event or a specific recurrence instance."""
+        return await delete_calendar_event_logic(calendar_uid, event_uid, event_rid)
+
+    @mcp.tool()
+    async def update_calendar_event(
+        calendar_uid: str, 
+        event_uid: str, 
+        event_rid: Optional[str] = None,
+        summary: Optional[str] = None,
+        description: Optional[str] = None
+    ) -> str:
+        """Updates the summary or description of a calendar event."""
+        return await update_calendar_event_logic(calendar_uid, event_uid, event_rid, summary, description)
 
     @mcp.tool()
     async def get_shared_calendar_events(

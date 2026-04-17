@@ -117,7 +117,15 @@ async def get_items_logic(
                         if query and query.lower() not in summary.lower():
                             return True
                             
+                        rid_val = comp.get_recurrenceid()
+                        rid_str = rid_val.as_ical_string() if rid_val else None
+                        if rid_str == "00000000T000000":
+                            rid_str = None
+                            
                         item = {
+                            "uid": comp.get_uid(),
+                            "rid": rid_str,
+                            "calendar_uid": source.get_uid(),
                             "source": source.get_display_name(),
                             "summary": summary,
                             "start": ical_time_to_local_string(start),
@@ -286,24 +294,98 @@ async def get_shared_calendar_events_logic(
 
 
 async def create_calendar_event_logic(calendar_uid: str, ical_data: str) -> str:
-    """Creates a new calendar event using the D-Bus interface."""
+    """Creates a new calendar event natively."""
     def _logic():
         try:
-            from gi.repository import GLib
-            from .mail import get_dbus_proxy
+            registry = EDataServer.SourceRegistry.new_sync(None)
+            source = registry.ref_source(calendar_uid)
+            if not source:
+                return f"Error: Calendar {calendar_uid} not found."
+                
+            client = ECal.Client.connect_sync(source, ECal.ClientSourceType.EVENTS, 30, None)
             
-            proxy = get_dbus_proxy()
-
-            # Call CreateEvent(calendar_uid, ical_data)
-            result = proxy.call_sync(
-                "CreateEvent",
-                GLib.Variant('(ss)', (calendar_uid, ical_data)),
-                Gio.DBusCallFlags.NONE, -1, None
-            )
-            success, message = result.unpack()
-            return f"{'Successfully' if success else 'Failed to'} create event: {message}"
+            comp = ICalGLib.Component.new_from_string(ical_data)
+            if not comp:
+                return "Error: Invalid iCal data."
+                
+            success, new_uid = client.create_object_sync(comp, ECal.OperationFlags.NONE, None)
+            return f"Successfully created event: {new_uid}" if success else "Failed to create event."
         except Exception as e:
-            logger.error(f"D-Bus create event failed: {e}")
-            return f"Error: {e}. Ensure the MCP automation bridge plugin supports 'CreateEvent'."
+            logger.exception("Failed to create event")
+            return f"Error: {e}"
+
+    return await asyncio.to_thread(_logic)
+
+async def delete_calendar_event_logic(calendar_uid: str, event_uid: str, event_rid: Optional[str] = None) -> str:
+    """Deletes a calendar event or a specific recurrence instance."""
+    def _logic():
+        nonlocal event_rid
+        if event_rid == "00000000T000000" or event_rid == "":
+            event_rid = None
+            
+        try:
+            registry = EDataServer.SourceRegistry.new_sync(None)
+            source = registry.ref_source(calendar_uid)
+            if not source:
+                return f"Error: Calendar {calendar_uid} not found."
+                
+            client = ECal.Client.connect_sync(source, ECal.ClientSourceType.EVENTS, 30, None)
+            
+            # Using THIS for simple removal or removing all recurring
+            mod = ECal.ObjModType.THIS
+            if not event_rid:
+                # If no recurrence ID is provided, removing the entire series/event makes sense
+                mod = ECal.ObjModType.ALL
+                
+            success = client.remove_object_sync(event_uid, event_rid, mod, ECal.OperationFlags.NONE, None)
+            return f"Successfully deleted event {event_uid}." if success else f"Failed to delete event {event_uid}."
+        except Exception as e:
+            logger.exception("Failed to delete event")
+            return f"Error: {e}"
+
+    return await asyncio.to_thread(_logic)
+
+async def update_calendar_event_logic(
+    calendar_uid: str, 
+    event_uid: str, 
+    event_rid: Optional[str] = None,
+    summary: Optional[str] = None,
+    description: Optional[str] = None
+) -> str:
+    """Updates the summary or description of a calendar event."""
+    def _logic():
+        try:
+            registry = EDataServer.SourceRegistry.new_sync(None)
+            source = registry.ref_source(calendar_uid)
+            if not source:
+                return f"Error: Calendar {calendar_uid} not found."
+            client = ECal.Client.connect_sync(source, ECal.ClientSourceType.EVENTS, 30, None)
+            
+            # Get the object
+            success, icalcomp = client.get_object_sync(event_uid, event_rid, None)
+            if not success or not icalcomp:
+                return f"Error: Event {event_uid} not found."
+                
+            comp = ECal.Component.new_from_icalcomponent(icalcomp)
+            
+            if summary is not None:
+                txt = ECal.ComponentText.new(summary, None)
+                comp.set_summary(txt)
+            
+            if description is not None:
+                txt = ECal.ComponentText.new(description, None)
+                comp.set_descriptions([txt])
+            
+            # Save modifications
+            mod = ECal.ObjModType.THIS
+            if not event_rid:
+                mod = ECal.ObjModType.ALL
+                
+            success = client.modify_object_sync(comp.get_icalcomponent(), mod, ECal.OperationFlags.NONE, None)
+            
+            return f"Successfully updated event {event_uid}." if success else f"Failed to update event {event_uid}."
+        except Exception as e:
+            logger.exception("Failed to update event")
+            return f"Error: {e}"
 
     return await asyncio.to_thread(_logic)
