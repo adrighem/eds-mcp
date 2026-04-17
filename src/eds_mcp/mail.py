@@ -4,13 +4,13 @@ import json
 import logging
 import asyncio
 from datetime import datetime
-from typing import Optional, List, Dict, Any
+from typing import Optional
 
 # Initial setup must happen before imports that might trigger GI loading
 from .env import setup_environment
 setup_environment()
 
-from gi.repository import EDataServer, Camel, Secret, GLib, Gio  # noqa: E402
+from gi.repository import EDataServer, Gio  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -330,10 +330,6 @@ async def send_mail_logic(account_uid: str, to: str, subject: str, body: str) ->
             return f"Error: {e}. Ensure the MCP automation bridge plugin supports 'SendMail'."
 
     return await asyncio.to_thread(_logic)
-
-
-
-)
 
 
 
