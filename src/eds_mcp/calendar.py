@@ -26,7 +26,7 @@ def ical_time_to_local_string(itt: ICalGLib.Time) -> str:
             else:
                 ts = itt.as_timet()
         # datetime.fromtimestamp(ts) returns local datetime based on system timezone
-        return datetime.fromtimestamp(ts).isoformat()
+        return datetime.fromtimestamp(ts).astimezone().isoformat()
     except Exception:
         return itt.as_ical_string()
 
