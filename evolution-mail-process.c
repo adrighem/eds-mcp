@@ -35,7 +35,14 @@ static const gchar xml[] =
     "      <arg type='b' name='success' direction='out'/>"
     "      <arg type='s' name='message' direction='out'/>"
     "    </method>"
-    "  </interface>"
+    "    <method name='GetMessage'>\n"
+    "      <arg type='s' name='account_uid' direction='in'/>\n"
+    "      <arg type='s' name='message_uid' direction='in'/>\n"
+    "      <arg type='s' name='folder_name' direction='in'/>\n"
+    "      <arg type='b' name='success' direction='out'/>\n"
+    "      <arg type='s' name='content' direction='out'/>\n"
+    "    </method>\n"
+    "  </interface>\n"
     "</node>";
 
 static void
@@ -175,6 +182,92 @@ handle_delete_message (GVariant *parameters, GDBusMethodInvocation *invocation)
     g_object_unref (service);
 }
 
+
+static void
+handle_get_message (GVariant *parameters, GDBusMethodInvocation *invocation)
+{
+    EShell *shell = e_shell_get_default ();
+    EShellBackend *shell_backend;
+    EMailBackend *backend;
+    EMailSession *session;
+    const gchar *account_uid, *message_uid, *folder_name;
+    CamelService *service;
+    CamelFolder *folder_obj = NULL;
+    CamelMimeMessage *message = NULL;
+    CamelDataWrapper *dw = NULL;
+    CamelStream *stream = NULL;
+    GByteArray *byte_array = NULL;
+    GError *error = NULL;
+
+    g_print ("McpAutomationBridge: GetMessage called\n");
+
+    if (!shell) {
+        g_dbus_method_invocation_return_value (invocation, g_variant_new ("(bs)", FALSE, "Shell not available"));
+        return;
+    }
+
+    shell_backend = e_shell_get_backend_by_name (shell, "mail");
+    if (!shell_backend) {
+        g_dbus_method_invocation_return_value (invocation, g_variant_new ("(bs)", FALSE, "Mail backend not found"));
+        return;
+    }
+
+    backend = E_MAIL_BACKEND (shell_backend);
+    session = e_mail_backend_get_session (backend);
+
+    g_variant_get (parameters, "(&s&s&s)", &account_uid, &message_uid, &folder_name);
+
+    service = camel_session_ref_service (CAMEL_SESSION (session), account_uid);
+    if (!service || !CAMEL_IS_STORE (service)) {
+        g_dbus_method_invocation_return_value (invocation, g_variant_new ("(bs)", FALSE, "Account not found or is not a store"));
+        if (service) g_object_unref (service);
+        return;
+    }
+
+    folder_obj = camel_store_get_folder_sync (CAMEL_STORE (service), folder_name, 0, NULL, &error);
+    if (!folder_obj) {
+        gchar *msg = g_strdup_printf ("Folder not found: %s", error ? error->message : "Unknown error");
+        g_dbus_method_invocation_return_value (invocation, g_variant_new ("(bs)", FALSE, msg));
+        g_free (msg);
+        g_clear_error (&error);
+        g_object_unref (service);
+        return;
+    }
+
+    message = camel_folder_get_message_sync (folder_obj, message_uid, NULL, &error);
+    if (!message) {
+        gchar *msg = g_strdup_printf ("Failed to get message: %s", error ? error->message : "Unknown error");
+        g_dbus_method_invocation_return_value (invocation, g_variant_new ("(bs)", FALSE, msg));
+        g_free (msg);
+        g_clear_error (&error);
+        g_object_unref (folder_obj);
+        g_object_unref (service);
+        return;
+    }
+
+    dw = CAMEL_DATA_WRAPPER (message);
+    byte_array = g_byte_array_new ();
+    stream = camel_stream_mem_new_with_byte_array (byte_array);
+    camel_data_wrapper_write_to_stream_sync (dw, stream, NULL, &error);
+    
+    if (error) {
+        gchar *msg = g_strdup_printf ("Failed to write message to stream: %s", error->message);
+        g_dbus_method_invocation_return_value (invocation, g_variant_new ("(bs)", FALSE, msg));
+        g_free (msg);
+        g_clear_error (&error);
+    } else {
+        gchar *valid_utf8 = g_utf8_make_valid ((const gchar *)byte_array->data, byte_array->len);
+        g_dbus_method_invocation_return_value (invocation, g_variant_new ("(bs)", TRUE, valid_utf8));
+        g_free (valid_utf8);
+    }
+
+    g_object_unref (stream);
+    g_byte_array_free (byte_array, TRUE);
+    g_object_unref (message);
+    g_object_unref (folder_obj);
+    g_object_unref (service);
+}
+
 static void
 handle_method_call (GDBusConnection *connection,
                     const gchar *sender,
@@ -189,6 +282,8 @@ handle_method_call (GDBusConnection *connection,
         handle_move_message (parameters, invocation);
     } else if (g_strcmp0 (method_name, "DeleteMessage") == 0) {
         handle_delete_message (parameters, invocation);
+    } else if (g_strcmp0 (method_name, "GetMessage") == 0) {
+        handle_get_message (parameters, invocation);
     }
 }
 
