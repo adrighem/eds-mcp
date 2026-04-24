@@ -196,16 +196,32 @@ async def get_email_body_logic(account_uid: str, message_uid: str, folder_name: 
                 base_cache = os.path.expanduser(f"~/.local/share/evolution/mail/{account_uid}/folders")
             
             folder_path = os.path.join(base_cache, folder_name, "cur")
-            if not os.path.exists(folder_path):
-                return f"Error: Folder cache not found at {folder_path}"
-
-            # 2. Search for the UID in the hashed subdirectories
-            import glob
-            search_pattern = os.path.join(folder_path, "*", message_uid)
-            matches = glob.glob(search_pattern)
+            matches = []
+            if os.path.exists(folder_path):
+                # 2. Search for the UID in the hashed subdirectories
+                import glob
+                search_pattern = os.path.join(folder_path, "*", message_uid)
+                matches = glob.glob(search_pattern)
             
             if not matches:
-                return f"Error: Message content for UID {message_uid} not found in {folder_name}. It might not be cached locally."
+                try:
+                    from gi.repository import GLib, Gio
+                    proxy = get_dbus_proxy()
+                    result = proxy.call_sync(
+                        "GetMessage",
+                        GLib.Variant('(sss)', (account_uid, message_uid, folder_name)),
+                        Gio.DBusCallFlags.NONE,
+                        -1,
+                        None
+                    )
+                    success, dbus_content = result.unpack()
+                    if success:
+                        return dbus_content
+                    else:
+                        return f"Error: Message content for UID {message_uid} not found locally, and D-Bus fetch failed: {dbus_content}"
+                except Exception as dbus_e:
+                    logger.warning(f"D-Bus fallback failed for {message_uid}: {dbus_e}")
+                    return f"Error: Message content for UID {message_uid} not found in {folder_name}. It might not be cached locally."
 
             # 3. Read the file (it's a raw RFC822 message)
             with open(matches[0], 'r', errors='replace') as f:
