@@ -3,8 +3,11 @@ import sqlite3
 import json
 import logging
 import asyncio
+import re
 from datetime import datetime
 from typing import Optional
+from email import message_from_string
+from email.message import Message
 
 # Initial setup must happen before imports that might trigger GI loading
 from .env import setup_environment
@@ -18,6 +21,90 @@ logger = logging.getLogger(__name__)
 EVOLUTION_BUS_NAME = "org.gnome.Evolution"
 EVOLUTION_OBJECT_PATH = "/org/gnome/evolution/McpAutomationBridge"
 EVOLUTION_INTERFACE_NAME = "org.gnome.Evolution.McpAutomationBridge"
+
+def clean_html(html: str) -> str:
+    """Basic HTML to text conversion without external dependencies."""
+    # Remove scripts and styles
+    html = re.sub(r'<(script|style)[^>]*>.*?</\1>', '', html, flags=re.DOTALL | re.IGNORECASE)
+    # Replace common block tags with newlines
+    html = re.sub(r'<(br|p|div|li|tr)[^>]*>', '\n', html, flags=re.IGNORECASE)
+    # Strip all other tags
+    text = re.sub(r'<[^>]+>', '', html)
+    # Decode basic entities
+    text = text.replace('&nbsp;', ' ').replace('&lt;', '<').replace('&gt;', '>').replace('&amp;', '&').replace('&quot;', '"')
+    # Clean up whitespace
+    text = re.sub(r'\n\s*\n', '\n\n', text)
+    return text.strip()
+
+def extract_text_from_message(raw_content: str) -> str:
+    """Parses RFC822 message and extracts the best text representation."""
+    try:
+        msg = message_from_string(raw_content)
+        
+        # 1. Try to find a plain text part
+        text_content = ""
+        html_content = ""
+        
+        if msg.is_multipart():
+            for part in msg.walk():
+                content_type = part.get_content_type()
+                disposition = str(part.get_content_disposition())
+                
+                if content_type == "text/plain" and "attachment" not in disposition:
+                    payload = part.get_payload(decode=True)
+                    charset = part.get_content_charset() or "utf-8"
+                    try:
+                        text_content += payload.decode(charset, errors="replace")
+                    except Exception:
+                        text_content += str(payload)
+                elif content_type == "text/html" and "attachment" not in disposition:
+                    payload = part.get_payload(decode=True)
+                    charset = part.get_content_charset() or "utf-8"
+                    try:
+                        html_content += payload.decode(charset, errors="replace")
+                    except Exception:
+                        html_content += str(payload)
+        else:
+            content_type = msg.get_content_type()
+            payload = msg.get_payload(decode=True)
+            charset = msg.get_content_charset() or "utf-8"
+            if content_type == "text/html":
+                try:
+                    html_content = payload.decode(charset, errors="replace")
+                except Exception:
+                    html_content = str(payload)
+            else:
+                try:
+                    text_content = payload.decode(charset, errors="replace")
+                except Exception:
+                    text_content = str(payload)
+        
+        # 2. Preference order
+        if text_content.strip():
+            final_text = text_content
+        elif html_content.strip():
+            final_text = clean_html(html_content)
+        else:
+            final_text = "No readable text content found."
+            
+        # Limit length to preserve context
+        MAX_BODY_LENGTH = 10000
+        if len(final_text) > MAX_BODY_LENGTH:
+            final_text = final_text[:MAX_BODY_LENGTH] + "\n\n[... content truncated due to length ...]"
+
+        # Add basic headers for context
+        headers = [
+            f"From: {msg.get('From')}",
+            f"To: {msg.get('To')}",
+            f"Subject: {msg.get('Subject')}",
+            f"Date: {msg.get('Date')}",
+            "-" * 40
+        ]
+        
+        return "\n".join(headers) + "\n" + final_text
+    except Exception as e:
+        logger.exception("Failed to parse email content")
+        return f"Error parsing email content: {e}\n\nRaw content sample: {raw_content[:500]}..."
 
 def get_mail_db_path(account_uid: str) -> Optional[str]:
     """Resolves the SQLite database path for a given Evolution mail account."""
@@ -43,7 +130,7 @@ async def list_mail_accounts_logic() -> str:
                         "uid": source.get_uid(),
                         "name": source.get_display_name()
                     })
-            return json.dumps(accounts, indent=2)
+            return json.dumps(accounts, separators=(',', ':'))
         except Exception as e:
             logger.exception("Failed to list mail accounts")
             return f"Error: {e}"
@@ -69,7 +156,7 @@ async def list_mail_folders_logic(account_uid: str) -> str:
                     "total": row[2]
                 })
             conn.close()
-            return json.dumps(folders, indent=2)
+            return json.dumps(folders, separators=(',', ':'))
         except Exception as e:
             logger.exception(f"Database error for account {account_uid}")
             return f"Error: {e}"
@@ -104,15 +191,17 @@ async def get_emails_logic(account_uid: str, folder_name: str = "Inbox", limit: 
                 except Exception:
                     date_str = str(row[3])
 
-                emails.append({
+                email = {
                     "uid": row[0],
                     "subject": row[1],
                     "from": row[2],
-                    "date": date_str,
-                    "preview": row[4]
-                })
+                    "date": date_str
+                }
+                if row[4] and row[4].strip():
+                    email["preview"] = row[4].strip()
+                emails.append(email)
             conn.close()
-            return json.dumps(emails, indent=2)
+            return json.dumps(emails, separators=(',', ':'))
         except Exception as e:
             logger.exception(f"Failed to fetch emails from {folder_name}")
             return f"Error: {e}"
@@ -141,7 +230,7 @@ async def search_emails_logic(account_uid: str, query: str, folder_name: Optiona
                 cursor.execute("SELECT folder_name FROM folders")
                 folders_to_search = [row[0] for row in cursor.fetchall()]
 
-            emails = []
+            all_results = []
             search_pattern = f"%{query}%"
 
             for folder in folders_to_search:
@@ -165,21 +254,31 @@ async def search_emails_logic(account_uid: str, query: str, folder_name: Optiona
                     except Exception:
                         date_str = str(row[3])
 
-                    emails.append({
+                    res = {
                         "uid": row[0],
                         "subject": row[1],
                         "from": row[2],
                         "date": date_str,
-                        "preview": row[4],
                         "folder": row[5]
-                    })
+                    }
+                    if row[4] and row[4].strip():
+                        res["preview"] = row[4].strip()
+                    all_results.append(res)
 
             # Sort combined results by date descending and take top 'limit'
-            emails.sort(key=lambda x: x['date'], reverse=True)
-            emails = emails[:limit]
+            all_results.sort(key=lambda x: x['date'], reverse=True)
+            all_results = all_results[:limit]
+
+            # Group by folder to save tokens
+            grouped = {}
+            for item in all_results:
+                f = item.pop("folder")
+                if f not in grouped:
+                    grouped[f] = []
+                grouped[f].append(item)
 
             conn.close()
-            return json.dumps(emails, indent=2)
+            return json.dumps(grouped, separators=(',', ':'))
         except Exception as e:
             logger.exception(f"Failed to search emails for query '{query}'")
             return f"Error: {e}"
@@ -187,7 +286,7 @@ async def search_emails_logic(account_uid: str, query: str, folder_name: Optiona
     return await asyncio.to_thread(_logic)
 
 async def get_email_body_logic(account_uid: str, message_uid: str, folder_name: str = "INBOX") -> str:
-    """Retrieves the full body/content of an email from the local cache."""
+    """Retrieves and optimizes the body/content of an email message."""
     def _logic():
         try:
             # 1. Resolve cache directory
@@ -203,6 +302,7 @@ async def get_email_body_logic(account_uid: str, message_uid: str, folder_name: 
                 search_pattern = os.path.join(folder_path, "*", message_uid)
                 matches = glob.glob(search_pattern)
             
+            raw_content = ""
             if not matches:
                 try:
                     from gi.repository import GLib, Gio
@@ -216,18 +316,18 @@ async def get_email_body_logic(account_uid: str, message_uid: str, folder_name: 
                     )
                     success, dbus_content = result.unpack()
                     if success:
-                        return dbus_content
+                        raw_content = dbus_content
                     else:
                         return f"Error: Message content for UID {message_uid} not found locally, and D-Bus fetch failed: {dbus_content}"
                 except Exception as dbus_e:
                     logger.warning(f"D-Bus fallback failed for {message_uid}: {dbus_e}")
                     return f"Error: Message content for UID {message_uid} not found in {folder_name}. It might not be cached locally."
-
-            # 3. Read the file (it's a raw RFC822 message)
-            with open(matches[0], 'r', errors='replace') as f:
-                content = f.read()
+            else:
+                # 3. Read the file (it's a raw RFC822 message)
+                with open(matches[0], 'r', errors='replace') as f:
+                    raw_content = f.read()
             
-            return content
+            return extract_text_from_message(raw_content)
         except Exception as e:
             logger.exception(f"Failed to read email body for {message_uid}")
             return f"Error: {e}"

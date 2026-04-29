@@ -17,8 +17,14 @@ def ical_time_to_local_string(itt: ICalGLib.Time) -> str:
     if not itt:
         return "Unknown"
     try:
-        # itt.as_timet() returns UTC timestamp
-        ts = itt.as_timet()
+        if itt.is_utc():
+            ts = itt.as_timet()
+        else:
+            zone = itt.get_timezone()
+            if zone:
+                ts = itt.as_timet_with_zone(zone)
+            else:
+                ts = itt.as_timet()
         # datetime.fromtimestamp(ts) returns local datetime based on system timezone
         return datetime.fromtimestamp(ts).isoformat()
     except Exception:
@@ -61,7 +67,7 @@ async def list_sources_logic(source_type: ECal.ClientSourceType) -> str:
                         "uid": source.get_uid(),
                         "name": source.get_display_name()
                     })
-            return json.dumps(result, indent=2)
+            return json.dumps(result, separators=(',', ':'))
         except Exception as e:
             logger.exception(f"Failed to list sources for {source_type}")
             return f"Error: {e}"
@@ -107,10 +113,13 @@ async def get_items_logic(
             start_ts = int(start_time.timestamp())
             end_ts = int(end_time.timestamp())
 
-            all_items = []
+            results = {}
             for source in target_sources:
                 try:
                     client = ECal.Client.connect_sync(source, source_type, 30, None)
+                    source_uid = source.get_uid()
+                    source_name = source.get_display_name()
+                    items = []
                     
                     def _actual_cb(comp, start, end, data, cancellable):
                         summary = get_component_summary(comp)
@@ -124,32 +133,41 @@ async def get_items_logic(
                             
                         item = {
                             "uid": comp.get_uid(),
-                            "rid": rid_str,
-                            "calendar_uid": source.get_uid(),
-                            "source": source.get_display_name(),
-                            "summary": summary,
-                            "start": ical_time_to_local_string(start),
-                            "end": ical_time_to_local_string(end)
+                            "summary": summary.strip() if summary else ""
                         }
+                        
+                        if rid_str:
+                            item["rid"] = rid_str
+                            
+                        # Add start/end if they differ or are meaningful
+                        s_str = ical_time_to_local_string(start)
+                        e_str = ical_time_to_local_string(end)
+                        item["start"] = s_str
+                        if s_str != e_str:
+                            item["end"] = e_str
                         
                         # Add task specific fields
                         if source_type == ECal.ClientSourceType.TASKS:
-                            # Percent complete
                             prop = comp.get_first_property(ICalGLib.PropertyKind.PERCENTCOMPLETE_PROPERTY)
                             if prop:
-                                item["percent_complete"] = prop.get_percentcomplete()
+                                item["pc"] = prop.get_percentcomplete() # Shorter key
                         
-                        all_items.append(item)
+                        items.append(item)
                         return True
 
                     client.generate_instances_sync(start_ts, end_ts, None, _actual_cb, None)
+                    if items:
+                        items.sort(key=lambda x: x['start'])
+                        results[source_name] = {
+                            "uid": source_uid,
+                            "items": items
+                        }
                     
                 except Exception:
                     logger.exception(f"Failed to process source '{source.get_display_name()}'")
                     continue
 
-            all_items.sort(key=lambda x: x['start'])
-            return json.dumps(all_items, separators=(',', ':'))
+            return json.dumps(results, separators=(',', ':'))
         except Exception as e:
             logger.exception("Failed to fetch items")
             return f"Error: {e}"
@@ -220,8 +238,7 @@ async def get_free_busy_logic(email: str, days_ahead: int, days_back: int, prima
                                 fb_type = str(fb_enum)
                         
                         fb_events.append({
-                            "calendar": f"Free/Busy ({email})",
-                            "summary": fb_type,
+                            "type": fb_type,
                             "start": ical_time_to_local_string(fb.get_start()),
                             "end": ical_time_to_local_string(fb.get_end())
                         })
@@ -286,7 +303,11 @@ async def get_shared_calendar_events_logic(
     try:
         # We use the primary account's connection to query Free/Busy for any organizational user.
         all_events = await get_free_busy_logic(email, days_ahead, days_back, primary_cal_uid)
-        return json.dumps(all_events, separators=(',', ':'))
+        result = {
+            "email": email,
+            "events": all_events
+        }
+        return json.dumps(result, separators=(',', ':'))
 
     except Exception as e:
         logger.exception("Error in get_shared_calendar_events_logic")
