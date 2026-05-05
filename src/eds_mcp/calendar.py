@@ -79,7 +79,9 @@ async def get_items_logic(
     days_ahead: int = 7, 
     days_back: int = 0, 
     query: Optional[str] = None, 
-    uid: Optional[str] = None
+    uid: Optional[str] = None,
+    date_str: Optional[str] = None,
+    summary_only: bool = False
 ) -> str:
     """Generic logic to fetch items (Events, Tasks, or Memos) for a date range."""
     def _logic():
@@ -107,8 +109,22 @@ async def get_items_logic(
 
             # Define time range
             now = datetime.now()
-            start_time = (now - timedelta(days=days_back)).replace(hour=0, minute=0, second=0, microsecond=0)
-            end_time = (now + timedelta(days=days_ahead)).replace(hour=23, minute=59, second=59, microsecond=999999)
+            if date_str:
+                if date_str.lower() == "today":
+                    target_date = now.date()
+                elif date_str.lower() == "tomorrow":
+                    target_date = (now + timedelta(days=1)).date()
+                else:
+                    try:
+                        target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+                    except ValueError:
+                        return f"Error: Invalid date format '{date_str}'. Use 'today', 'tomorrow', or 'YYYY-MM-DD'."
+                
+                start_time = datetime.combine(target_date, datetime.min.time())
+                end_time = datetime.combine(target_date, datetime.max.time())
+            else:
+                start_time = (now - timedelta(days=days_back)).replace(hour=0, minute=0, second=0, microsecond=0)
+                end_time = (now + timedelta(days=days_ahead)).replace(hour=23, minute=59, second=59, microsecond=999999)
             
             start_ts = int(start_time.timestamp())
             end_ts = int(end_time.timestamp())
@@ -167,6 +183,32 @@ async def get_items_logic(
                     logger.exception(f"Failed to process source '{source.get_display_name()}'")
                     continue
 
+            if summary_only:
+                if not results:
+                    return "No items found for this period."
+                
+                output = []
+                for source_name, data in results.items():
+                    output.append(f"### {source_name}")
+                    for item in data["items"]:
+                        # Format time: 2026-05-05T09:00:00+02:00 -> 09:00
+                        try:
+                            start_dt = datetime.fromisoformat(item["start"])
+                            time_str = start_dt.strftime("%H:%M")
+                            if "end" in item:
+                                end_dt = datetime.fromisoformat(item["end"])
+                                time_str += f" - {end_dt.strftime('%H:%M')}"
+                        except:
+                            time_str = item["start"]
+                            
+                        summary = item["summary"]
+                        if source_type == ECal.ClientSourceType.TASKS and "pc" in item:
+                            summary += f" ({item['pc']}% complete)"
+                            
+                        output.append(f"* **{time_str}**: {summary}")
+                    output.append("")
+                return "\n".join(output).strip()
+
             return json.dumps(results, separators=(',', ':'))
         except Exception as e:
             logger.exception("Failed to fetch items")
@@ -178,14 +220,14 @@ async def get_items_logic(
 async def list_calendars_logic() -> str:
     return await list_sources_logic(ECal.ClientSourceType.EVENTS)
 
-async def get_calendar_events_logic(days_ahead=7, days_back=0, query=None, calendar_uid=None) -> str:
-    return await get_items_logic(ECal.ClientSourceType.EVENTS, days_ahead, days_back, query, calendar_uid)
+async def get_calendar_events_logic(days_ahead=7, days_back=0, query=None, calendar_uid=None, date=None, summary_only=False) -> str:
+    return await get_items_logic(ECal.ClientSourceType.EVENTS, days_ahead, days_back, query, calendar_uid, date, summary_only)
 
 async def list_tasks_logic() -> str:
     return await list_sources_logic(ECal.ClientSourceType.TASKS)
 
-async def get_tasks_logic(days_ahead=30, days_back=30, query=None, task_list_uid=None) -> str:
-    return await get_items_logic(ECal.ClientSourceType.TASKS, days_ahead, days_back, query, task_list_uid)
+async def get_tasks_logic(days_ahead=30, days_back=30, query=None, task_list_uid=None, date=None, summary_only=False) -> str:
+    return await get_items_logic(ECal.ClientSourceType.TASKS, days_ahead, days_back, query, task_list_uid, date, summary_only)
 
 async def list_memos_logic() -> str:
     return await list_sources_logic(ECal.ClientSourceType.MEMOS)

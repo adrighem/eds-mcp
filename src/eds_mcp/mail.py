@@ -163,7 +163,7 @@ async def list_mail_folders_logic(account_uid: str) -> str:
 
     return await asyncio.to_thread(_logic)
 
-async def get_emails_logic(account_uid: str, folder_name: str = "Inbox", limit: int = 10) -> str:
+async def get_emails_logic(account_uid: str, folder_name: str = "Inbox", limit: int = 10, format: str = "json") -> str:
     """Gets recent emails from a specific folder with validation."""
     db_path = get_mail_db_path(account_uid)
     if not db_path:
@@ -201,6 +201,21 @@ async def get_emails_logic(account_uid: str, folder_name: str = "Inbox", limit: 
                     email["preview"] = row[4].strip()
                 emails.append(email)
             conn.close()
+
+            if format == "summary":
+                if not emails:
+                    return f"No emails found in {folder_name}."
+                
+                output = [f"## Recent emails in {folder_name}"]
+                for e in emails:
+                    sender = e["from"].split("<")[0].strip() or e["from"]
+                    line = f"* **{e['subject']}** (from: {sender}, {e['date']})"
+                    if "preview" in e:
+                        snippet = e["preview"][:100] + "..." if len(e["preview"]) > 100 else e["preview"]
+                        line += f"\n  _{snippet}_"
+                    output.append(line)
+                return "\n".join(output)
+
             return json.dumps(emails, separators=(',', ':'))
         except Exception as e:
             logger.exception(f"Failed to fetch emails from {folder_name}")

@@ -91,12 +91,15 @@ if check_gi_dependencies():
         days_ahead: int = 7,
         days_back: int = 0,
         query: Optional[str] = None,
-        calendar_uid: Optional[str] = None
+        calendar_uid: Optional[str] = None,
+        date: Optional[str] = None,
+        summary_only: bool = False
     ) -> str:
         """Gets calendar events for a date range and optional search query.
         Includes support for recurring events via EDS instance generation.
+        Use date='today' or 'tomorrow' for quick daily views.
         """
-        return await get_calendar_events_logic(days_ahead, days_back, query, calendar_uid)
+        return await get_calendar_events_logic(days_ahead, days_back, query, calendar_uid, date, summary_only)
 
     @mcp.tool()
     async def create_calendar_event(calendar_uid: str, ical_data: str) -> str:
@@ -136,18 +139,23 @@ if check_gi_dependencies():
         days_ahead: int = 30,
         days_back: int = 30,
         query: Optional[str] = None,
-        task_list_uid: Optional[str] = None
+        task_list_uid: Optional[str] = None,
+        date: Optional[str] = None,
+        summary_only: bool = False
     ) -> str:
-        """Gets tasks/to-dos from Evolution task lists."""
-        return await get_tasks_logic(days_ahead, days_back, query, task_list_uid)
+        """Gets tasks/to-dos from Evolution task lists.
+        Use date='today' or 'tomorrow' for quick daily views.
+        """
+        return await get_tasks_logic(days_ahead, days_back, query, task_list_uid, date, summary_only)
 
     @mcp.tool()
     async def get_memos(
         query: Optional[str] = None,
-        memo_list_uid: Optional[str] = None
+        memo_list_uid: Optional[str] = None,
+        summary_only: bool = False
     ) -> str:
         """Gets memos/notes from Evolution memo lists."""
-        return await get_memos_logic(query, memo_list_uid)
+        return await get_memos_logic(query, memo_list_uid, summary_only=summary_only)
 
     @mcp.tool()
     async def search_contacts(query: str) -> str:
@@ -165,9 +173,54 @@ if check_gi_dependencies():
         return await list_mail_folders_logic(account_uid)
 
     @mcp.tool()
-    async def get_emails(account_uid: str, folder_name: str = "Inbox", limit: int = 10) -> str:
-        """Gets recent emails from a specific folder (defaults to Inbox)."""
-        return await get_emails_logic(account_uid, folder_name, limit)
+    async def get_emails(account_uid: str, folder_name: str = "Inbox", limit: int = 10, format: str = "json") -> str:
+        """Gets recent emails from a specific folder (defaults to Inbox). 
+        Use format='summary' for a human-readable list.
+        """
+        return await get_emails_logic(account_uid, folder_name, limit, format)
+
+    @mcp.tool()
+    async def get_daily_summary(account_uid: Optional[str] = None) -> str:
+        """Returns a comprehensive markdown summary of today's calendar, tasks, and recent emails.
+        If account_uid is omitted, it will attempt to use the first available mail account.
+        """
+        # 1. Get Calendar for today
+        cal_summary = await get_calendar_events_logic(date="today", summary_only=True)
+        
+        # 2. Get Tasks for today
+        task_summary = await get_tasks_logic(date="today", summary_only=True)
+        
+        # 3. Get Emails
+        if not account_uid:
+            accounts_json = await list_mail_accounts_logic()
+            try:
+                import json
+                accounts = json.loads(accounts_json)
+                if accounts:
+                    account_uid = accounts[0]["uid"]
+            except: pass
+            
+        mail_summary = ""
+        if account_uid:
+            mail_summary = await get_emails_logic(account_uid, limit=10, format="summary")
+        else:
+            mail_summary = "_No mail account identified for summary._"
+            
+        from datetime import datetime
+        summary = [
+            "# Daily Summary",
+            f"Date: {datetime.now().strftime('%A, %d %B %Y')}",
+            "",
+            "## 📅 Calendar",
+            cal_summary,
+            "",
+            "## ✅ Tasks",
+            task_summary,
+            "",
+            mail_summary
+        ]
+        
+        return "\n".join(summary)
 
     @mcp.tool()
     async def get_email_body(account_uid: str, message_uid: str, folder_name: str = "INBOX") -> str:
