@@ -43,6 +43,16 @@ source .venv/bin/activate
 uv pip install -e .
 ```
 
+### Automation Bridge (Required for modifying emails)
+
+This server relies on a custom Evolution plugin to perform destructive actions like moving or deleting emails.
+
+To install the bridge, run:
+```bash
+make install-bridge
+```
+*Note: This will install build dependencies, compile the C plugin, and install it into Evolution's plugin directory. It may prompt for your sudo password.*
+
 ### 2. Add as an MCP Server to Gemini
 Add the following configuration to your Gemini/Claude config file (usually `~/.config/Gemini/config.json` or via the CLI):
 

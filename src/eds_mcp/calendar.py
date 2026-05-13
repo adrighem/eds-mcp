@@ -161,6 +161,48 @@ async def get_items_logic(
                         item["start"] = s_str
                         if s_str != e_str:
                             item["end"] = e_str
+                            
+                        # Extract attendees
+                        attendees = []
+                        att_prop = comp.get_first_property(ICalGLib.PropertyKind.ATTENDEE_PROPERTY)
+                        while att_prop:
+                            email = att_prop.get_attendee()
+                            if email:
+                                cn_param = att_prop.get_first_parameter(ICalGLib.ParameterKind.CN_PARAMETER)
+                                name = cn_param.get_cn() if cn_param else None
+                                
+                                partstat_param = att_prop.get_first_parameter(ICalGLib.ParameterKind.PARTSTAT_PARAMETER)
+                                status = "NEEDS-ACTION"
+                                if partstat_param:
+                                    partstat_enum = partstat_param.get_partstat()
+                                    if partstat_enum == ICalGLib.ParameterPartstat.ACCEPTED:
+                                        status = "ACCEPTED"
+                                    elif partstat_enum == ICalGLib.ParameterPartstat.DECLINED:
+                                        status = "DECLINED"
+                                    elif partstat_enum == ICalGLib.ParameterPartstat.TENTATIVE:
+                                        status = "TENTATIVE"
+                                    elif partstat_enum == ICalGLib.ParameterPartstat.DELEGATED:
+                                        status = "DELEGATED"
+                                    elif partstat_enum == ICalGLib.ParameterPartstat.NEEDSACTION:
+                                        status = "NEEDS-ACTION"
+                                    elif partstat_enum == ICalGLib.ParameterPartstat.COMPLETED:
+                                        status = "COMPLETED"
+                                    elif partstat_enum == ICalGLib.ParameterPartstat.INPROCESS:
+                                        status = "IN-PROCESS"
+                                    else:
+                                        status = str(partstat_enum)
+                                
+                                if email.startswith("mailto:"):
+                                    email = email[7:]
+                                attendees.append({
+                                    "email": email,
+                                    "name": name if name else email,
+                                    "status": status
+                                })
+                            att_prop = comp.get_next_property(ICalGLib.PropertyKind.ATTENDEE_PROPERTY)
+                        
+                        if attendees:
+                            item["attendees"] = attendees
                         
                         # Add task specific fields
                         if source_type == ECal.ClientSourceType.TASKS:
