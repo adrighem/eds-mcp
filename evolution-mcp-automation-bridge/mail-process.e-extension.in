@@ -1,0 +1,5 @@
+[Extension]
+Module=my-evolution-extension
+Name=My Custom Extension
+Description=A custom extension for Evolution
+Type=EExtension
