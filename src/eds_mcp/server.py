@@ -262,9 +262,9 @@ if check_gi_dependencies():
 
     # --- Prompts ---
 
-    @mcp.prompt("daily_briefing")
-    def daily_briefing_prompt() -> str:
-        """A prompt to generate a daily briefing based on the user's agenda, tasks and recent mail."""
+    @mcp.prompt("schedule_today")
+    def schedule_today_prompt() -> str:
+        """A prompt to generate a schedule for today based on the user's agenda, tasks and recent mail."""
         return (
             "Please use 'get_calendar_events' for today, 'get_tasks' for pending items, "
             "and 'get_emails' for my primary inbox. Summarize my day, highlight urgent tasks, "

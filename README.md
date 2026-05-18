@@ -18,7 +18,7 @@ An MCP server that integrates with the GNOME Evolution Data Server (EDS). This a
 - **get_emails**: Retrieve recent emails from a specific folder.
 
 ### Prompts
-- **daily_briefing**: A prompt to generate a daily briefing based on the user's agenda.
+- **schedule_today**: A prompt to generate a schedule for today based on the user's agenda.
 - **contact_dossier**: Gather information about a specific contact.
 
 ## Accessing Microsoft Outlook Calendars
