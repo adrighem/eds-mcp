@@ -38,8 +38,10 @@ if check_gi_dependencies():
     from .mail import (
         list_mail_accounts_logic, list_mail_folders_logic, get_emails_logic, 
         search_emails_logic, move_email_logic, get_email_body_logic,
-        send_mail_logic, mark_as_read_logic, delete_message_logic
+        send_mail_logic, mark_as_read_logic, delete_message_logic,
+        list_attachments_logic, save_attachment_logic
     )
+    from .documents import parse_document_logic
 
     # --- Resources ---
 
@@ -226,6 +228,25 @@ if check_gi_dependencies():
     async def get_email_body(account_uid: str, message_uid: str, folder_name: str = "INBOX") -> str:
         """Retrieves the full raw body/content of an email message."""
         return await get_email_body_logic(account_uid, message_uid, folder_name)
+
+    @mcp.tool()
+    async def list_attachments(account_uid: str, message_uid: str, folder_name: str = "INBOX") -> str:
+        """Lists attachments for a specific email message."""
+        return await list_attachments_logic(account_uid, message_uid, folder_name)
+
+    @mcp.tool()
+    async def download_attachment(account_uid: str, message_uid: str, folder_name: str, attachment_name: str) -> str:
+        """Saves an attachment to a temporary file and returns the path."""
+        return await save_attachment_logic(account_uid, message_uid, folder_name, attachment_name)
+
+    @mcp.tool()
+    async def read_document(file_path: str) -> str:
+        """Extracts text content from a document file (PDF, DOCX, XLSX, TXT, etc.).
+        
+        This tool should be used AFTER downloading an attachment with 'download_attachment'.
+        Provide the full path returned by 'download_attachment'.
+        """
+        return await parse_document_logic(file_path)
 
     @mcp.tool()
     async def search_emails(account_uid: str, query: str, folder_name: Optional[str] = None, limit: int = 10) -> str:

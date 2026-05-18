@@ -17,9 +17,19 @@ For discovering identifiers like `account_uid`, `calendar_uid`, or folder names,
 ### 🛠️ Tool-Based Actions & Queries
 Use tools for data retrieval that requires parameters (e.g., date ranges, search terms, limits) or for operations that mutate data:
 - `mcp_eds_get_emails` / `mcp_eds_search_emails`: Read emails for a specific account.
+- `mcp_eds_get_email_body`: Fetch the full body of an email.
+- `mcp_eds_list_attachments`: List all attachments for a specific email.
+- `mcp_eds_download_attachment`: Download an attachment to a temporary local path.
+- `mcp_eds_read_document`: Extract text from a document (PDF, DOCX, XLSX, TXT).
 - `mcp_eds_get_calendar_events`: Fetch events for a date range.
 - `mcp_eds_create_calendar_event` / `mcp_eds_update_calendar_event` / `mcp_eds_delete_calendar_event`: Create, modify, and delete calendar events.
 - `mcp_eds_move_email`: Archive or delete messages.
+
+### 📄 Document Analysis Workflow
+To analyze an attachment:
+1.  Use `list_attachments` to find the target file.
+2.  Use `download_attachment` to save it locally.
+3.  Use `read_document` with the returned path to extract the content.
 
 ### 🚫 Restricted Access
 Treat raw Evolution configuration files (`~/.config/evolution`, etc.) as strictly out-of-bounds. Use the MCP server interface for all data interactions.

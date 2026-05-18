@@ -462,5 +462,60 @@ async def send_mail_logic(account_uid: str, to: str, subject: str, body: str) ->
 
     return await asyncio.to_thread(_logic)
 
+async def list_attachments_logic(account_uid: str, message_uid: str, folder_name: str = "INBOX") -> str:
+    """Lists attachments for a specific email message."""
+    def _logic():
+        try:
+            from gi.repository import GLib
+            proxy = get_dbus_proxy()
+
+            # Call ListAttachments(account_uid, message_uid, folder_name)
+            result = proxy.call_sync(
+                "ListAttachments",
+                GLib.Variant('(sss)', (account_uid, message_uid, folder_name)),
+                Gio.DBusCallFlags.NONE, -1, None
+            )
+            success, attachments_json = result.unpack()
+            if success:
+                return attachments_json
+            else:
+                return f"Error: {attachments_json}"
+        except Exception as e:
+            logger.error(f"D-Bus list attachments failed: {e}")
+            return f"Error: {e}. Ensure the MCP automation bridge plugin supports 'ListAttachments'."
+
+    return await asyncio.to_thread(_logic)
+
+async def save_attachment_logic(account_uid: str, message_uid: str, folder_name: str, attachment_name: str) -> str:
+    """Saves an attachment to a temporary file and returns the path."""
+    def _logic():
+        try:
+            import tempfile
+            from gi.repository import GLib
+            
+            # Create a secure temporary directory for this attachment
+            temp_dir = tempfile.mkdtemp(prefix="eds_mcp_attachment_")
+            dest_path = os.path.join(temp_dir, attachment_name)
+            
+            proxy = get_dbus_proxy()
+
+            # Call SaveAttachment(account_uid, message_uid, folder_name, attachment_name, dest_path)
+            result = proxy.call_sync(
+                "SaveAttachment",
+                GLib.Variant('(sssss)', (account_uid, message_uid, folder_name, attachment_name, dest_path)),
+                Gio.DBusCallFlags.NONE, -1, None
+            )
+            success, message = result.unpack()
+            if success:
+                return f"Attachment saved to: {dest_path}"
+            else:
+                return f"Error: {message}"
+        except Exception as e:
+            logger.error(f"D-Bus save attachment failed: {e}")
+            return f"Error: {e}. Ensure the MCP automation bridge plugin supports 'SaveAttachment'."
+
+    return await asyncio.to_thread(_logic)
+
+
 
 

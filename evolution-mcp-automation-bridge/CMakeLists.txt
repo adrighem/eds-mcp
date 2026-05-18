@@ -13,7 +13,7 @@ pkg_check_modules(EDS        REQUIRED libedataserver-1.2)
 pkg_check_modules(CAMEL      REQUIRED camel-1.2)
 pkg_check_modules(EBOOK      REQUIRED libebook-1.2)
 pkg_check_modules(ECAL       REQUIRED libecal-2.0)
-pkg_check_modules(GLIB       REQUIRED glib-2.0 gobject-2.0 gmodule-2.0 gio-2.0)
+pkg_check_modules(GLIB       REQUIRED glib-2.0 gobject-2.0 gmodule-2.0 gio-2.0 json-glib-1.0)
 
 add_library(evolution-mcp-automation-bridge SHARED
   evolution-mail-process.c
