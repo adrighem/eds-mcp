@@ -63,9 +63,18 @@ async def list_sources_logic(source_type: ECal.ClientSourceType) -> str:
             result = []
             for source in sources:
                 if source.get_enabled():
+                    parent_uid = source.get_parent()
+                    parent_name = None
+                    if parent_uid:
+                        parent_source = registry.ref_source(parent_uid)
+                        if parent_source:
+                            parent_name = parent_source.get_display_name()
+                    
                     result.append({
                         "uid": source.get_uid(),
-                        "name": source.get_display_name()
+                        "name": source.get_display_name(),
+                        "parent_uid": parent_uid,
+                        "parent_name": parent_name
                     })
             return json.dumps(result, separators=(',', ':'))
         except Exception as e:
