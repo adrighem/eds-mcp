@@ -1,9 +1,9 @@
 # Implementation Plan - email_mgmt_20260520
 
 ## Phase 1: Environment & Bridge Integration
-- [ ] Task: Verify Automation Bridge Installation and D-Bus Interface
-    - [ ] Create a diagnostic script to ping the Evolution bridge via D-Bus
-    - [ ] Document the exact D-Bus methods and signatures exposed by the bridge
+- [x] Task: Verify Automation Bridge Installation and D-Bus Interface
+    - [x] Create a diagnostic script to ping the Evolution bridge via D-Bus
+    - [x] Document the exact D-Bus methods and signatures exposed by the bridge
 - [ ] Task: Conductor - User Manual Verification 'Phase 1: Environment & Bridge Integration' (Protocol in workflow.md)
 
 ## Phase 2: Implement Email Management Tools
