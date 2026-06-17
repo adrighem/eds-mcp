@@ -14,3 +14,9 @@
 - Findings: no open issues, no unread notifications, no code scanning alerts; open `PR:10` and Dependabot alerts `ALERT:18`, `ALERT:19`, `ALERT:20`, and `ALERT:21` all target `pypdf`.
 - Action: refreshed `pypdf` locally with `uv lock --upgrade-package pypdf`; resolver selected `pypdf` 6.13.2, newer than the PR target 6.13.0.
 - Verification: `uv lock --check` passed; `uv run pytest` passed with 12 tests and 1 existing `PyGIDeprecationWarning`.
+
+## 2026-06-17 refactor pass
+
+- Scope: contributor-focused refactor for readability, testability, and onboarding.
+- Action: extracted `summary.py`, refactored `documents.py`, consolidated mail bridge calls, added `CONTRIBUTING.md`, expanded Makefile checks, and fixed `.gitignore` so tests under `tests/` are not ignored.
+- Verification: `make check` passed with 24 tests and 1 existing `PyGIDeprecationWarning`.

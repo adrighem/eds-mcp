@@ -1,5 +1,4 @@
 import pytest
-import asyncio
 from unittest.mock import MagicMock
 from eds_mcp.mail import move_email_logic, delete_message_logic
 
@@ -17,8 +16,6 @@ def mock_dbus_proxy(mocker):
 
 @pytest.mark.asyncio
 async def test_move_email_success(mock_dbus_proxy, mock_gio):
-    mock_gio_pkg, mock_glib = mock_gio
-    
     # Mock result of MoveMessage
     mock_result = MagicMock()
     mock_result.unpack.return_value = (True, "Success")
@@ -35,8 +32,6 @@ async def test_move_email_success(mock_dbus_proxy, mock_gio):
 
 @pytest.mark.asyncio
 async def test_move_email_failure(mock_dbus_proxy, mock_gio):
-    mock_gio_pkg, mock_glib = mock_gio
-    
     # Mock failure result
     mock_result = MagicMock()
     mock_result.unpack.return_value = (False, "Folder not found")
@@ -49,8 +44,6 @@ async def test_move_email_failure(mock_dbus_proxy, mock_gio):
 
 @pytest.mark.asyncio
 async def test_delete_email_success(mock_dbus_proxy, mock_gio):
-    mock_gio_pkg, mock_glib = mock_gio
-    
     # Mock result of DeleteMessage
     mock_result = MagicMock()
     mock_result.unpack.return_value = (True, "Success")
@@ -64,8 +57,6 @@ async def test_delete_email_success(mock_dbus_proxy, mock_gio):
 
 @pytest.mark.asyncio
 async def test_delete_email_failure(mock_dbus_proxy, mock_gio):
-    mock_gio_pkg, mock_glib = mock_gio
-    
     # Mock failure result
     mock_result = MagicMock()
     mock_result.unpack.return_value = (False, "Message not found")
@@ -78,8 +69,6 @@ async def test_delete_email_failure(mock_dbus_proxy, mock_gio):
 
 @pytest.mark.asyncio
 async def test_dbus_exception_handling(mock_dbus_proxy, mock_gio):
-    mock_gio_pkg, mock_glib = mock_gio
-    
     # Mock D-Bus error
     mock_dbus_proxy.call_sync.side_effect = Exception("D-Bus error")
 

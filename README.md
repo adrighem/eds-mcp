@@ -78,6 +78,19 @@ You can also run the server directly to see if it starts:
 uv run eds-mcp
 ```
 
+## Development
+
+Useful local checks:
+```bash
+make test
+make lock-check
+make check
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup details, project layout, and
+the difference between the default Python unit suite and the live Evolution
+bridge integration test.
+
 ## Requirements
 - Linux with GNOME
 - `evolution-data-server` and the corresponding `-dev` packages.

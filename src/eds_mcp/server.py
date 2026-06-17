@@ -42,6 +42,7 @@ if check_gi_dependencies():
         list_attachments_logic, save_attachment_logic
     )
     from .documents import parse_document_logic
+    from .summary import get_daily_summary_logic
 
     # --- Resources ---
 
@@ -186,43 +187,13 @@ if check_gi_dependencies():
         """Returns a comprehensive markdown summary of today's calendar, tasks, and recent emails.
         If account_uid is omitted, it will attempt to use the first available mail account.
         """
-        # 1. Get Calendar for today
-        cal_summary = await get_calendar_events_logic(date="today", summary_only=True)
-        
-        # 2. Get Tasks for today
-        task_summary = await get_tasks_logic(date="today", summary_only=True)
-        
-        # 3. Get Emails
-        if not account_uid:
-            accounts_json = await list_mail_accounts_logic()
-            try:
-                import json
-                accounts = json.loads(accounts_json)
-                if accounts:
-                    account_uid = accounts[0]["uid"]
-            except: pass
-            
-        mail_summary = ""
-        if account_uid:
-            mail_summary = await get_emails_logic(account_uid, limit=10, format="summary")
-        else:
-            mail_summary = "_No mail account identified for summary._"
-            
-        from datetime import datetime
-        summary = [
-            "# Daily Summary",
-            f"Date: {datetime.now().strftime('%A, %d %B %Y')}",
-            "",
-            "## 📅 Calendar",
-            cal_summary,
-            "",
-            "## ✅ Tasks",
-            task_summary,
-            "",
-            mail_summary
-        ]
-        
-        return "\n".join(summary)
+        return await get_daily_summary_logic(
+            get_calendar_events_logic,
+            get_tasks_logic,
+            list_mail_accounts_logic,
+            get_emails_logic,
+            account_uid=account_uid,
+        )
 
     @mcp.tool()
     async def get_email_body(account_uid: str, message_uid: str, folder_name: str = "INBOX") -> str:

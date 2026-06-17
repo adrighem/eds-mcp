@@ -5,3 +5,10 @@
 - Initialized maintainer state because the repository did not yet have `.github/maintainer/`.
 - Combined open Dependabot lockfile-only PRs into one local dependency refresh rather than reviewing or merging each bot branch independently.
 - Constrained root pytest discovery to `tests/` because the bridge D-Bus test requires Evolution and `gi` and is not a default unit-test dependency.
+
+## 2026-06-17 refactor pass
+
+- Extracted daily-summary orchestration from `server.py` into `summary.py` so it can be tested without GI or MCP registration side effects.
+- Refactored document parsing around a parser registry and explicit context limits so new file formats have a clear extension point.
+- Narrowed `.gitignore` root scratch-test handling from `test_*.py` to `/test_*.py`; real unit tests under `tests/` should be trackable.
+- Added contributor documentation and Makefile checks to reduce setup and review friction.

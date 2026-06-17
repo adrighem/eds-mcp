@@ -375,6 +375,22 @@ def get_dbus_proxy():
         raise Exception("Evolution is not running or the MCP automation bridge plugin is disabled. Please start Evolution first.")
     return proxy
 
+
+def call_bridge_method(method_name: str, variant_signature: str, parameters: tuple):
+    """Call a method on the Evolution automation bridge and unpack the result."""
+    from gi.repository import GLib
+
+    proxy = get_dbus_proxy()
+    result = proxy.call_sync(
+        method_name,
+        GLib.Variant(variant_signature, parameters),
+        Gio.DBusCallFlags.NONE,
+        -1,
+        None,
+    )
+    return result.unpack()
+
+
 async def move_email_logic(account_uid: str, message_uid: str, source_folder: str, dest_folder: str) -> str:
     """
     Moves an email using the Evolution extension D-Bus interface.
@@ -383,20 +399,11 @@ async def move_email_logic(account_uid: str, message_uid: str, source_folder: st
     """
     def _logic():
         try:
-            from gi.repository import GLib
-            proxy = get_dbus_proxy()
-
-            # Call MoveMessage(account_uid, message_uid, source_folder, dest_folder)
-            # Returns (success: boolean, message: string)
-            result = proxy.call_sync(
+            success, message = call_bridge_method(
                 "MoveMessage",
-                GLib.Variant('(ssss)', (account_uid, message_uid, source_folder, dest_folder)),
-                Gio.DBusCallFlags.NONE,
-                -1,
-                None
+                '(ssss)',
+                (account_uid, message_uid, source_folder, dest_folder),
             )
-            
-            success, message = result.unpack()
             if success:
                 return f"Successfully moved email: {message}"
             else:
@@ -412,16 +419,11 @@ async def mark_as_read_logic(account_uid: str, message_uid: str, folder_name: st
     """Marks an email as read or unread using the D-Bus interface."""
     def _logic():
         try:
-            from gi.repository import GLib
-            proxy = get_dbus_proxy()
-
-            # Call MarkAsRead(account_uid, message_uid, folder_name, read)
-            result = proxy.call_sync(
+            success, message = call_bridge_method(
                 "MarkAsRead",
-                GLib.Variant('(sssb)', (account_uid, message_uid, folder_name, read)),
-                Gio.DBusCallFlags.NONE, -1, None
+                '(sssb)',
+                (account_uid, message_uid, folder_name, read),
             )
-            success, message = result.unpack()
             return f"{'Successfully' if success else 'Failed to'} mark as {'read' if read else 'unread'}: {message}"
         except Exception as e:
             logger.error(f"D-Bus mark as read failed: {e}")
@@ -433,16 +435,11 @@ async def delete_message_logic(account_uid: str, message_uid: str, folder_name: 
     """Deletes an email using the D-Bus interface."""
     def _logic():
         try:
-            from gi.repository import GLib
-            proxy = get_dbus_proxy()
-
-            # Call DeleteMessage(account_uid, message_uid, folder_name)
-            result = proxy.call_sync(
+            success, message = call_bridge_method(
                 "DeleteMessage",
-                GLib.Variant('(sss)', (account_uid, message_uid, folder_name)),
-                Gio.DBusCallFlags.NONE, -1, None
+                '(sss)',
+                (account_uid, message_uid, folder_name),
             )
-            success, message = result.unpack()
             return f"{'Successfully' if success else 'Failed to'} delete message: {message}"
         except Exception as e:
             logger.error(f"D-Bus delete failed: {e}")
@@ -454,16 +451,11 @@ async def send_mail_logic(account_uid: str, to: str, subject: str, body: str) ->
     """Sends an email using the D-Bus interface."""
     def _logic():
         try:
-            from gi.repository import GLib
-            proxy = get_dbus_proxy()
-
-            # Call SendMail(account_uid, to, subject, body)
-            result = proxy.call_sync(
+            success, message = call_bridge_method(
                 "SendMail",
-                GLib.Variant('(ssss)', (account_uid, to, subject, body)),
-                Gio.DBusCallFlags.NONE, -1, None
+                '(ssss)',
+                (account_uid, to, subject, body),
             )
-            success, message = result.unpack()
             return f"{'Successfully sent' if success else 'Failed to send'} mail: {message}"
         except Exception as e:
             logger.error(f"D-Bus send failed: {e}")
@@ -475,16 +467,11 @@ async def list_attachments_logic(account_uid: str, message_uid: str, folder_name
     """Lists attachments for a specific email message."""
     def _logic():
         try:
-            from gi.repository import GLib
-            proxy = get_dbus_proxy()
-
-            # Call ListAttachments(account_uid, message_uid, folder_name)
-            result = proxy.call_sync(
+            success, attachments_json = call_bridge_method(
                 "ListAttachments",
-                GLib.Variant('(sss)', (account_uid, message_uid, folder_name)),
-                Gio.DBusCallFlags.NONE, -1, None
+                '(sss)',
+                (account_uid, message_uid, folder_name),
             )
-            success, attachments_json = result.unpack()
             if success:
                 return attachments_json
             else:
@@ -500,21 +487,16 @@ async def save_attachment_logic(account_uid: str, message_uid: str, folder_name:
     def _logic():
         try:
             import tempfile
-            from gi.repository import GLib
             
             # Create a secure temporary directory for this attachment
             temp_dir = tempfile.mkdtemp(prefix="eds_mcp_attachment_")
             dest_path = os.path.join(temp_dir, attachment_name)
             
-            proxy = get_dbus_proxy()
-
-            # Call SaveAttachment(account_uid, message_uid, folder_name, attachment_name, dest_path)
-            result = proxy.call_sync(
+            success, message = call_bridge_method(
                 "SaveAttachment",
-                GLib.Variant('(sssss)', (account_uid, message_uid, folder_name, attachment_name, dest_path)),
-                Gio.DBusCallFlags.NONE, -1, None
+                '(sssss)',
+                (account_uid, message_uid, folder_name, attachment_name, dest_path),
             )
-            success, message = result.unpack()
             if success:
                 return f"Attachment saved to: {dest_path}"
             else:
@@ -524,7 +506,6 @@ async def save_attachment_logic(account_uid: str, message_uid: str, folder_name:
             return f"Error: {e}. Ensure the MCP automation bridge plugin supports 'SaveAttachment'."
 
     return await asyncio.to_thread(_logic)
-
 
 
 

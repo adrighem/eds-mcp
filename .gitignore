@@ -48,6 +48,6 @@ logs/
 .DS_Store
 Thumbs.db
 
-# Temporary test and debug scripts
-test_*.py
-debug_*.py
+# Temporary test and debug scripts at the repository root
+/test_*.py
+/debug_*.py
