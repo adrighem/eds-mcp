@@ -34,7 +34,7 @@ echo "-- Using plugin dir: $PLUGINDIR"
 # Prereqs (best-effort per distro)
 if command -v apt >/dev/null 2>&1; then
   sudo apt install -y build-essential pkg-config cmake \
-    evolution-dev libgtk-3-dev libglib2.0-dev libebook-1.2-dev libecal2.0-dev libcamel1.2-dev || true
+    evolution-dev libgtk-3-dev libglib2.0-dev libedataserver1.2-dev libecal2.0-dev libcamel1.2-dev || true
 fi
 
 # Build

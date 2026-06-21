@@ -1,5 +1,6 @@
 build/
 *.so
 *.o
+build_python.py
 .idea/
 .DS_Store

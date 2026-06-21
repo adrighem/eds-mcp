@@ -1,6 +1,7 @@
 import os
 import sys
 import logging
+import warnings
 
 def setup_environment():
     """
@@ -63,7 +64,17 @@ def setup_environment():
             break
 
     try:
-        from gi.repository import Camel
+        import gi
+        # PyGObject currently emits this while loading GLib overrides through
+        # EDS/Camel imports. The deprecated API is accessed inside PyGObject's
+        # override loader, not by eds-mcp code.
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message=r"GLib\.unix_signal_add_full is deprecated; use GLibUnix\.signal_add_full instead",
+                category=gi.PyGIDeprecationWarning,
+            )
+            from gi.repository import Camel
         Camel.provider_init()
     except Exception:
         pass

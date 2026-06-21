@@ -51,3 +51,12 @@ Thumbs.db
 # Temporary test and debug scripts at the repository root
 /test_*.py
 /debug_*.py
+
+# Local install/debug runners and captured output
+/run_install.py
+/run_install.sh
+/final_install.py
+/final_install.sh
+/install_out*.txt
+/*install_out*.out
+/uv_install_out.out

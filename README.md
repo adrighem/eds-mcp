@@ -16,6 +16,15 @@ An MCP server that integrates with the GNOME Evolution Data Server (EDS). This a
 - **delete_calendar_event**: Delete an event or a specific recurrence from a calendar.
 - **search_contacts**: Search for contacts in your Evolution address book.
 - **get_emails**: Retrieve recent emails from a specific folder.
+- **search_emails**: Search emails across folders.
+- **send_email**: Send an email.
+- **mark_email_as_read**: Mark an email as read or unread.
+- **move_email**: Move an email to a different folder.
+- **delete_email**: Delete an email.
+- **get_email_body**: Retrieve the full body of an email.
+- **list_attachments**: List all attachments for a specific email.
+- **download_attachment**: Save an attachment to a local file.
+- **read_document**: Extract text from a document.
 
 ### Prompts
 - **schedule_today**: A prompt to generate a schedule for today based on the user's agenda.

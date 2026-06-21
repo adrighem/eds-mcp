@@ -23,7 +23,7 @@ async def test_move_email_success(mock_dbus_proxy, mock_gio):
 
     # Run
     result = await move_email_logic("acc1", "msg1", "Inbox", "Archive")
-    
+
     assert "Successfully moved email: Success" in result
     mock_dbus_proxy.call_sync.assert_called_once()
     # Check variant construction
@@ -66,6 +66,22 @@ async def test_delete_email_failure(mock_dbus_proxy, mock_gio):
     result = await delete_message_logic("acc1", "msg1", "Inbox")
     
     assert "Failed to delete message: Message not found" in result
+
+@pytest.mark.asyncio
+async def test_mark_email_as_read_success(mock_dbus_proxy, mock_gio):
+    from eds_mcp.mail import mark_as_read_logic
+    # Mock result
+    mock_result = MagicMock()
+    mock_result.unpack.return_value = (True, "Message marked as read")
+    mock_dbus_proxy.call_sync.return_value = mock_result
+
+    # Run
+    result = await mark_as_read_logic("acc1", "msg1", "Inbox", True)
+
+    assert "Successfully mark as read: Message marked as read" in result
+    mock_dbus_proxy.call_sync.assert_called_once()
+    args = mock_dbus_proxy.call_sync.call_args[0]
+    assert args[0] == "MarkAsRead"
 
 @pytest.mark.asyncio
 async def test_dbus_exception_handling(mock_dbus_proxy, mock_gio):

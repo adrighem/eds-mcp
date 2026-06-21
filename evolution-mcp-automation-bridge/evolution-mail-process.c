@@ -35,7 +35,23 @@ static const gchar xml[] =
     "      <arg type='s' name='folder_name' direction='in'/>"
     "      <arg type='b' name='success' direction='out'/>"
     "      <arg type='s' name='message' direction='out'/>"
-    "    </method>"
+    "    </method>\n"
+    "    <method name='MarkAsRead'>\n"
+    "      <arg type='s' name='account_uid' direction='in'/>\n"
+    "      <arg type='s' name='message_uid' direction='in'/>\n"
+    "      <arg type='s' name='folder_name' direction='in'/>\n"
+    "      <arg type='b' name='read' direction='in'/>\n"
+    "      <arg type='b' name='success' direction='out'/>\n"
+    "      <arg type='s' name='message' direction='out'/>\n"
+    "    </method>\n"
+    "    <method name='SendMail'>\n"
+    "      <arg type='s' name='account_uid' direction='in'/>\n"
+    "      <arg type='s' name='to' direction='in'/>\n"
+    "      <arg type='s' name='subject' direction='in'/>\n"
+    "      <arg type='s' name='body' direction='in'/>\n"
+    "      <arg type='b' name='success' direction='out'/>\n"
+    "      <arg type='s' name='message' direction='out'/>\n"
+    "    </method>\n"
     "    <method name='GetMessage'>\n"
     "      <arg type='s' name='account_uid' direction='in'/>\n"
     "      <arg type='s' name='message_uid' direction='in'/>\n"
@@ -194,6 +210,63 @@ handle_delete_message (GVariant *parameters, GDBusMethodInvocation *invocation)
     camel_folder_synchronize_sync (folder_obj, FALSE, NULL, NULL);
 
     g_dbus_method_invocation_return_value (invocation, g_variant_new ("(bs)", TRUE, "Message deleted successfully"));
+
+    g_object_unref (folder_obj);
+    g_object_unref (service);
+}
+
+static void
+handle_mark_as_read (GVariant *parameters, GDBusMethodInvocation *invocation)
+{
+    EShell *shell = e_shell_get_default ();
+    EShellBackend *shell_backend;
+    EMailBackend *backend;
+    EMailSession *session;
+    const gchar *account_uid, *message_uid, *folder_name;
+    gboolean read_flag;
+    CamelService *service;
+    CamelFolder *folder_obj = NULL;
+    GError *error = NULL;
+
+    g_print ("McpAutomationBridge: MarkAsRead called\n");
+
+    if (!shell) {
+        g_dbus_method_invocation_return_value (invocation, g_variant_new ("(bs)", FALSE, "Shell not available"));
+        return;
+    }
+
+    shell_backend = e_shell_get_backend_by_name (shell, "mail");
+    if (!shell_backend) {
+        g_dbus_method_invocation_return_value (invocation, g_variant_new ("(bs)", FALSE, "Mail backend not found"));
+        return;
+    }
+
+    backend = E_MAIL_BACKEND (shell_backend);
+    session = e_mail_backend_get_session (backend);
+
+    g_variant_get (parameters, "(&s&s&sb)", &account_uid, &message_uid, &folder_name, &read_flag);
+
+    service = camel_session_ref_service (CAMEL_SESSION (session), account_uid);
+    if (!service || !CAMEL_IS_STORE (service)) {
+        g_dbus_method_invocation_return_value (invocation, g_variant_new ("(bs)", FALSE, "Account not found or is not a store"));
+        if (service) g_object_unref (service);
+        return;
+    }
+
+    folder_obj = camel_store_get_folder_sync (CAMEL_STORE (service), folder_name, 0, NULL, &error);
+    if (!folder_obj) {
+        gchar *msg = g_strdup_printf ("Folder not found: %s", error ? error->message : "Unknown error");
+        g_dbus_method_invocation_return_value (invocation, g_variant_new ("(bs)", FALSE, msg));
+        g_free (msg);
+        g_clear_error (&error);
+        g_object_unref (service);
+        return;
+    }
+
+    camel_folder_set_message_flags (folder_obj, message_uid, CAMEL_MESSAGE_SEEN, read_flag ? CAMEL_MESSAGE_SEEN : 0);
+    camel_folder_synchronize_sync (folder_obj, FALSE, NULL, NULL);
+
+    g_dbus_method_invocation_return_value (invocation, g_variant_new ("(bs)", TRUE, read_flag ? "Message marked as read" : "Message marked as unread"));
 
     g_object_unref (folder_obj);
     g_object_unref (service);
@@ -483,6 +556,96 @@ handle_save_attachment (GVariant *parameters, GDBusMethodInvocation *invocation)
 }
 
 static void
+handle_send_mail (GVariant *parameters, GDBusMethodInvocation *invocation)
+{
+    EShell *shell = e_shell_get_default ();
+    EShellBackend *shell_backend;
+    EMailBackend *backend;
+    EMailSession *session;
+    const gchar *account_uid, *to, *subject, *body;
+    CamelMimeMessage *message;
+    CamelInternetAddress *from_addr, *to_addr;
+    CamelTransport *transport;
+    CamelAddress *from_addr_cast, *to_addr_cast;
+    GError *error = NULL;
+    gboolean success = FALSE;
+
+    g_print ("McpAutomationBridge: SendMail called\n");
+
+    if (!shell) {
+        g_dbus_method_invocation_return_value (invocation, g_variant_new ("(bs)", FALSE, "Shell not available"));
+        return;
+    }
+
+    shell_backend = e_shell_get_backend_by_name (shell, "mail");
+    if (!shell_backend) {
+        g_dbus_method_invocation_return_value (invocation, g_variant_new ("(bs)", FALSE, "Mail backend not found"));
+        return;
+    }
+
+    backend = E_MAIL_BACKEND (shell_backend);
+    session = e_mail_backend_get_session (backend);
+
+    g_variant_get (parameters, "(&s&s&s&s)", &account_uid, &to, &subject, &body);
+
+    message = camel_mime_message_new ();
+    camel_mime_message_set_subject (message, subject);
+
+    ESourceRegistry *registry = e_shell_get_registry (shell);
+    ESource *source = e_source_registry_ref_source (registry, account_uid);
+    const gchar *from_email = "";
+    const gchar *from_name = "";
+    if (source) {
+        ESourceMailIdentity *identity = e_source_get_extension (source, E_SOURCE_EXTENSION_MAIL_IDENTITY);
+        if (identity) {
+            from_email = e_source_mail_identity_get_address (identity);
+            from_name = e_source_mail_identity_get_name (identity);
+        }
+    }
+
+    from_addr = camel_internet_address_new ();
+    camel_internet_address_add (from_addr, from_name ? from_name : "", from_email ? from_email : "");
+    camel_mime_message_set_from (message, from_addr);
+    g_object_unref (from_addr);
+
+    to_addr = camel_internet_address_new ();
+    camel_internet_address_add (to_addr, "", to);
+    camel_mime_message_set_recipients (message, CAMEL_RECIPIENT_TYPE_TO, to_addr);
+    g_object_unref (to_addr);
+
+    camel_mime_part_set_content (CAMEL_MIME_PART (message), body, strlen (body), "text/plain");
+
+    transport = CAMEL_TRANSPORT (e_mail_session_ref_transport_for_message (session, message));
+    if (!transport) {
+        gchar *msg = g_strdup_printf ("Failed to get transport: Unknown error");
+        g_dbus_method_invocation_return_value (invocation, g_variant_new ("(bs)", FALSE, msg));
+        g_free (msg);
+        g_clear_error (&error);
+        g_object_unref (message);
+        if (source) g_object_unref (source);
+        return;
+    }
+
+    from_addr_cast = CAMEL_ADDRESS (camel_mime_message_get_from (message));
+    to_addr_cast = CAMEL_ADDRESS (camel_mime_message_get_recipients (message, CAMEL_RECIPIENT_TYPE_TO));
+
+    success = camel_transport_send_to_sync (transport, message, from_addr_cast, to_addr_cast, NULL, NULL, &error);
+
+    if (success) {
+        g_dbus_method_invocation_return_value (invocation, g_variant_new ("(bs)", TRUE, "Message sent successfully"));
+    } else {
+        gchar *msg = g_strdup_printf ("Send failed: %s", error ? error->message : "Unknown error");
+        g_dbus_method_invocation_return_value (invocation, g_variant_new ("(bs)", FALSE, msg));
+        g_free (msg);
+        g_clear_error (&error);
+    }
+
+    g_object_unref (transport);
+    g_object_unref (message);
+    if (source) g_object_unref (source);
+}
+
+static void
 handle_method_call (GDBusConnection *connection,
                     const gchar *sender,
                     const gchar *object_path,
@@ -496,12 +659,16 @@ handle_method_call (GDBusConnection *connection,
         handle_move_message (parameters, invocation);
     } else if (g_strcmp0 (method_name, "DeleteMessage") == 0) {
         handle_delete_message (parameters, invocation);
+    } else if (g_strcmp0 (method_name, "MarkAsRead") == 0) {
+        handle_mark_as_read (parameters, invocation);
     } else if (g_strcmp0 (method_name, "GetMessage") == 0) {
         handle_get_message (parameters, invocation);
     } else if (g_strcmp0 (method_name, "ListAttachments") == 0) {
         handle_list_attachments (parameters, invocation);
     } else if (g_strcmp0 (method_name, "SaveAttachment") == 0) {
         handle_save_attachment (parameters, invocation);
+    } else if (g_strcmp0 (method_name, "SendMail") == 0) {
+        handle_send_mail (parameters, invocation);
     }
 }
 
