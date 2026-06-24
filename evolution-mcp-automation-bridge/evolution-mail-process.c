@@ -44,14 +44,6 @@ static const gchar xml[] =
     "      <arg type='b' name='success' direction='out'/>\n"
     "      <arg type='s' name='message' direction='out'/>\n"
     "    </method>\n"
-    "    <method name='SendMail'>\n"
-    "      <arg type='s' name='account_uid' direction='in'/>\n"
-    "      <arg type='s' name='to' direction='in'/>\n"
-    "      <arg type='s' name='subject' direction='in'/>\n"
-    "      <arg type='s' name='body' direction='in'/>\n"
-    "      <arg type='b' name='success' direction='out'/>\n"
-    "      <arg type='s' name='message' direction='out'/>\n"
-    "    </method>\n"
     "    <method name='GetMessage'>\n"
     "      <arg type='s' name='account_uid' direction='in'/>\n"
     "      <arg type='s' name='message_uid' direction='in'/>\n"
@@ -72,6 +64,14 @@ static const gchar xml[] =
     "      <arg type='s' name='folder_name' direction='in'/>\n"
     "      <arg type='s' name='attachment_name' direction='in'/>\n"
     "      <arg type='s' name='dest_path' direction='in'/>\n"
+    "      <arg type='b' name='success' direction='out'/>\n"
+    "      <arg type='s' name='message' direction='out'/>\n"
+    "    </method>\n"
+    "    <method name='SendMail'>\n"
+    "      <arg type='s' name='account_uid' direction='in'/>\n"
+    "      <arg type='s' name='to' direction='in'/>\n"
+    "      <arg type='s' name='subject' direction='in'/>\n"
+    "      <arg type='s' name='body' direction='in'/>\n"
     "      <arg type='b' name='success' direction='out'/>\n"
     "      <arg type='s' name='message' direction='out'/>\n"
     "    </method>\n"
@@ -562,13 +562,21 @@ handle_send_mail (GVariant *parameters, GDBusMethodInvocation *invocation)
     EShellBackend *shell_backend;
     EMailBackend *backend;
     EMailSession *session;
-    const gchar *account_uid, *to, *subject, *body;
-    CamelMimeMessage *message;
-    CamelInternetAddress *from_addr, *to_addr;
-    CamelTransport *transport;
-    CamelAddress *from_addr_cast, *to_addr_cast;
-    GError *error = NULL;
+    ESourceRegistry *registry;
+    const gchar *account_uid, *to_str, *subject_str, *body_str;
+    ESource *source = NULL;
+    ESourceMailSubmission *submission = NULL;
+    ESourceMailIdentity *identity = NULL;
+    const gchar *transport_uid = NULL;
+    const gchar *from_name = NULL;
+    const gchar *from_address = NULL;
+    CamelService *service = NULL;
+    CamelTransport *transport = NULL;
+    CamelMimeMessage *msg = NULL;
+    CamelInternetAddress *from_addr = NULL;
+    CamelInternetAddress *to_addr = NULL;
     gboolean success = FALSE;
+    GError *error = NULL;
 
     g_print ("McpAutomationBridge: SendMail called\n");
 
@@ -585,64 +593,145 @@ handle_send_mail (GVariant *parameters, GDBusMethodInvocation *invocation)
 
     backend = E_MAIL_BACKEND (shell_backend);
     session = e_mail_backend_get_session (backend);
+    registry = e_shell_get_registry (shell);
 
-    g_variant_get (parameters, "(&s&s&s&s)", &account_uid, &to, &subject, &body);
+    g_variant_get (parameters, "(&s&s&s&s)", &account_uid, &to_str, &subject_str, &body_str);
 
-    message = camel_mime_message_new ();
-    camel_mime_message_set_subject (message, subject);
-
-    ESourceRegistry *registry = e_shell_get_registry (shell);
-    ESource *source = e_source_registry_ref_source (registry, account_uid);
-    const gchar *from_email = "";
-    const gchar *from_name = "";
-    if (source) {
-        ESourceMailIdentity *identity = e_source_get_extension (source, E_SOURCE_EXTENSION_MAIL_IDENTITY);
-        if (identity) {
-            from_email = e_source_mail_identity_get_address (identity);
-            from_name = e_source_mail_identity_get_name (identity);
-        }
-    }
-
-    from_addr = camel_internet_address_new ();
-    camel_internet_address_add (from_addr, from_name ? from_name : "", from_email ? from_email : "");
-    camel_mime_message_set_from (message, from_addr);
-    g_object_unref (from_addr);
-
-    to_addr = camel_internet_address_new ();
-    camel_internet_address_add (to_addr, "", to);
-    camel_mime_message_set_recipients (message, CAMEL_RECIPIENT_TYPE_TO, to_addr);
-    g_object_unref (to_addr);
-
-    camel_mime_part_set_content (CAMEL_MIME_PART (message), body, strlen (body), "text/plain");
-
-    transport = CAMEL_TRANSPORT (e_mail_session_ref_transport_for_message (session, message));
-    if (!transport) {
-        gchar *msg = g_strdup_printf ("Failed to get transport: Unknown error");
-        g_dbus_method_invocation_return_value (invocation, g_variant_new ("(bs)", FALSE, msg));
-        g_free (msg);
-        g_clear_error (&error);
-        g_object_unref (message);
-        if (source) g_object_unref (source);
+    source = e_source_registry_ref_source (registry, account_uid);
+    if (!source) {
+        g_dbus_method_invocation_return_value (invocation, g_variant_new ("(bs)", FALSE, "Account source not found in registry"));
         return;
     }
 
-    from_addr_cast = CAMEL_ADDRESS (camel_mime_message_get_from (message));
-    to_addr_cast = CAMEL_ADDRESS (camel_mime_message_get_recipients (message, CAMEL_RECIPIENT_TYPE_TO));
-
-    success = camel_transport_send_to_sync (transport, message, from_addr_cast, to_addr_cast, NULL, NULL, &error);
-
-    if (success) {
-        g_dbus_method_invocation_return_value (invocation, g_variant_new ("(bs)", TRUE, "Message sent successfully"));
-    } else {
-        gchar *msg = g_strdup_printf ("Send failed: %s", error ? error->message : "Unknown error");
-        g_dbus_method_invocation_return_value (invocation, g_variant_new ("(bs)", FALSE, msg));
-        g_free (msg);
-        g_clear_error (&error);
+    // 1. Resolve Transport (Submission) UID (checking account, parents, and siblings)
+    if (e_source_has_extension (source, E_SOURCE_EXTENSION_MAIL_SUBMISSION)) {
+        submission = e_source_get_extension (source, E_SOURCE_EXTENSION_MAIL_SUBMISSION);
+        transport_uid = e_source_mail_submission_get_transport_uid (submission);
+    }
+    if (!transport_uid) {
+        const gchar *parent_uid = e_source_get_parent (source);
+        if (parent_uid) {
+            ESource *parent_source = e_source_registry_ref_source (registry, parent_uid);
+            if (parent_source) {
+                if (e_source_has_extension (parent_source, E_SOURCE_EXTENSION_MAIL_SUBMISSION)) {
+                    submission = e_source_get_extension (parent_source, E_SOURCE_EXTENSION_MAIL_SUBMISSION);
+                    transport_uid = e_source_mail_submission_get_transport_uid (submission);
+                }
+                g_object_unref (parent_source);
+            }
+            if (!transport_uid) {
+                GList *sources = e_source_registry_list_sources (registry, E_SOURCE_EXTENSION_MAIL_SUBMISSION);
+                for (GList *l = sources; l != NULL; l = l->next) {
+                    ESource *s = E_SOURCE (l->data);
+                    if (g_strcmp0 (e_source_get_parent (s), parent_uid) == 0) {
+                        submission = e_source_get_extension (s, E_SOURCE_EXTENSION_MAIL_SUBMISSION);
+                        transport_uid = e_source_mail_submission_get_transport_uid (submission);
+                        break;
+                    }
+                }
+                g_list_free (sources);
+            }
+        }
     }
 
-    g_object_unref (transport);
-    g_object_unref (message);
-    if (source) g_object_unref (source);
+    if (!transport_uid) {
+        g_dbus_method_invocation_return_value (invocation, g_variant_new ("(bs)", FALSE, "Could not resolve transport (submission) UID for account"));
+        g_object_unref (source);
+        return;
+    }
+
+    // 2. Resolve Sender Identity details (checking account, parents, and siblings)
+    if (e_source_has_extension (source, E_SOURCE_EXTENSION_MAIL_IDENTITY)) {
+        identity = e_source_get_extension (source, E_SOURCE_EXTENSION_MAIL_IDENTITY);
+        from_name = e_source_mail_identity_get_name (identity);
+        from_address = e_source_mail_identity_get_address (identity);
+    }
+    if (!from_address) {
+        const gchar *parent_uid = e_source_get_parent (source);
+        if (parent_uid) {
+            ESource *parent_source = e_source_registry_ref_source (registry, parent_uid);
+            if (parent_source) {
+                if (e_source_has_extension (parent_source, E_SOURCE_EXTENSION_MAIL_IDENTITY)) {
+                    identity = e_source_get_extension (parent_source, E_SOURCE_EXTENSION_MAIL_IDENTITY);
+                    from_name = e_source_mail_identity_get_name (identity);
+                    from_address = e_source_mail_identity_get_address (identity);
+                }
+                g_object_unref (parent_source);
+            }
+            if (!from_address) {
+                GList *sources = e_source_registry_list_sources (registry, E_SOURCE_EXTENSION_MAIL_IDENTITY);
+                for (GList *l = sources; l != NULL; l = l->next) {
+                    ESource *s = E_SOURCE (l->data);
+                    if (g_strcmp0 (e_source_get_parent (s), parent_uid) == 0) {
+                        identity = e_source_get_extension (s, E_SOURCE_EXTENSION_MAIL_IDENTITY);
+                        from_name = e_source_mail_identity_get_name (identity);
+                        from_address = e_source_mail_identity_get_address (identity);
+                        break;
+                    }
+                }
+                g_list_free (sources);
+            }
+        }
+    }
+
+    if (!from_address) {
+        g_dbus_method_invocation_return_value (invocation, g_variant_new ("(bs)", FALSE, "Could not resolve sender from-address for account"));
+        g_object_unref (source);
+        return;
+    }
+
+    // 3. Retrieve Camel Transport service
+    service = camel_session_ref_service (CAMEL_SESSION (session), transport_uid);
+    if (!service || !CAMEL_IS_TRANSPORT (service)) {
+        g_dbus_method_invocation_return_value (invocation, g_variant_new ("(bs)", FALSE, "Transport service not found or invalid"));
+        if (service) g_object_unref (service);
+        g_object_unref (source);
+        return;
+    }
+    transport = CAMEL_TRANSPORT (service);
+
+    // 4. Create and populate message
+    msg = camel_mime_message_new ();
+    camel_mime_message_set_subject (msg, subject_str);
+
+    // Create and attach text/plain content body
+    camel_mime_part_set_content (CAMEL_MIME_PART (msg), body_str, strlen (body_str), "text/plain");
+
+    // Setup Addresses (from, to)
+    from_addr = camel_internet_address_new ();
+    camel_internet_address_add (from_addr, from_name, from_address);
+    camel_mime_message_set_from (msg, from_addr);
+
+    to_addr = camel_internet_address_new ();
+    camel_internet_address_add (to_addr, NULL, to_str);
+    camel_mime_message_set_recipients (msg, CAMEL_RECIPIENT_TYPE_TO, to_addr);
+
+    // 5. Connect and send
+    if (!camel_service_connect_sync (service, NULL, &error)) {
+        gchar *msg_err = g_strdup_printf ("Failed to connect to transport service: %s", error ? error->message : "Unknown error");
+        g_dbus_method_invocation_return_value (invocation, g_variant_new ("(bs)", FALSE, msg_err));
+        g_free (msg_err);
+        g_clear_error (&error);
+    } else {
+        gboolean out_sent_message_saved = FALSE;
+        success = camel_transport_send_to_sync (transport, msg, CAMEL_ADDRESS (from_addr), CAMEL_ADDRESS (to_addr), &out_sent_message_saved, NULL, &error);
+        if (success) {
+            g_dbus_method_invocation_return_value (invocation, g_variant_new ("(bs)", TRUE, "Email sent successfully"));
+        } else {
+            gchar *msg_err = g_strdup_printf ("Failed to send email: %s", error ? error->message : "Unknown error");
+            g_dbus_method_invocation_return_value (invocation, g_variant_new ("(bs)", FALSE, msg_err));
+            g_free (msg_err);
+            g_clear_error (&error);
+        }
+        camel_service_disconnect_sync (service, TRUE, NULL, NULL);
+    }
+
+    // Clean up
+    g_object_unref (from_addr);
+    g_object_unref (to_addr);
+    g_object_unref (msg);
+    g_object_unref (service);
+    g_object_unref (source);
 }
 
 static void

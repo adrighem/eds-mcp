@@ -2,6 +2,33 @@ import os
 import sys
 import logging
 import warnings
+import stat
+
+
+def _ensure_session_bus_environment():
+    """Infer the user D-Bus session bus when MCP launchers strip session env."""
+    runtime_dir = os.environ.get("XDG_RUNTIME_DIR")
+    fallback_runtime_dir = f"/run/user/{os.getuid()}"
+
+    if not runtime_dir and os.path.isdir(fallback_runtime_dir):
+        try:
+            if os.stat(fallback_runtime_dir).st_uid == os.getuid():
+                runtime_dir = fallback_runtime_dir
+                os.environ["XDG_RUNTIME_DIR"] = runtime_dir
+        except OSError:
+            pass
+
+    if os.environ.get("DBUS_SESSION_BUS_ADDRESS") or not runtime_dir:
+        return
+
+    bus_path = os.path.join(runtime_dir, "bus")
+    try:
+        bus_stat = os.stat(bus_path)
+    except OSError:
+        return
+
+    if bus_stat.st_uid == os.getuid() and stat.S_ISSOCK(bus_stat.st_mode):
+        os.environ["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={bus_path}"
 
 def setup_environment():
     """
@@ -9,6 +36,8 @@ def setup_environment():
     This is necessary when running in a virtual environment on systems like Ubuntu
     where the introspection bindings are installed globally.
     """
+    _ensure_session_bus_environment()
+
     # 1. Add system paths for Python 3.x dist-packages
     # We use a broad range of potential paths to support various distributions
     potential_paths = [

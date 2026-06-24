@@ -5,6 +5,9 @@ import os
 # Add src to path to use project imports if needed
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
 
+from eds_mcp.env import setup_environment
+setup_environment()
+
 from gi.repository import Gio
 
 EVOLUTION_BUS_NAME = "org.gnome.Evolution"

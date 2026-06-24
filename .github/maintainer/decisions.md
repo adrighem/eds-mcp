@@ -12,3 +12,9 @@
 - Refactored document parsing around a parser registry and explicit context limits so new file formats have a clear extension point.
 - Narrowed `.gitignore` root scratch-test handling from `test_*.py` to `/test_*.py`; real unit tests under `tests/` should be trackable.
 - Added contributor documentation and Makefile checks to reduce setup and review friction.
+
+## 2026-06-24 local maintenance
+
+- Resolved the `env.py` conflict by keeping both the D-Bus session-bus fallback and the PyGObject deprecation-warning suppression.
+- Resolved the bridge conflict by keeping the upstream `MarkAsRead` method and the transport-UID based `SendMail` path, while removing the duplicate `SendMail` XML declaration.
+- Refreshed `uv.lock` with a full `uv lock --upgrade` after resolving generated lockfile conflicts.

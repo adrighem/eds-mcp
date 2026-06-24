@@ -1,10 +1,11 @@
 {
   "repo": "adrighem/eds-mcp",
-  "last_run": "2026-06-17",
-  "last_mode": "maintain-ship",
+  "last_run": "2026-06-24",
+  "last_mode": "maintain",
   "open_items_seen": {
     "issues": [],
-    "pull_requests": [10],
-    "dependabot_alerts": [18, 19, 20, 21]
+    "pull_requests": [],
+    "dependabot_alerts": [],
+    "code_scanning_alerts": []
   }
 }

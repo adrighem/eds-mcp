@@ -1,5 +1,19 @@
 # Maintainer Runs
 
+## 2026-06-24
+
+- Scope: open issue/PR/security triage for `adrighem/eds-mcp`.
+- Findings: no open issues, PRs, Dependabot alerts, or code-scanning alerts.
+- Action: no public action needed.
+
+## 2026-06-24 local maintenance
+
+- Scope: resolve local stash/upstream conflicts and refresh dependencies.
+- Action: resolved conflicts in the Evolution bridge, environment setup, and generated `uv.lock`; refreshed all Python dependencies with `uv lock --upgrade`.
+- Bridge resolution: kept `MarkAsRead`, kept one `SendMail` D-Bus XML entry, and retained the transport-UID based `SendMail` implementation.
+- Environment resolution: combined D-Bus session fallback with the PyGObject warning filter.
+- Verification: `make check` passed with 26 tests; `cmake --build evolution-mcp-automation-bridge/build` passed.
+
 ## 2026-06-17
 
 - Scope: open issue/PR triage for `adrighem/eds-mcp`.
