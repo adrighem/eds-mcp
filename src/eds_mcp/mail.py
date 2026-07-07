@@ -24,7 +24,6 @@ EVOLUTION_BUS_NAME = "org.gnome.Evolution"
 EVOLUTION_OBJECT_PATH = "/org/gnome/evolution/McpAutomationBridge"
 EVOLUTION_INTERFACE_NAME = "org.gnome.Evolution.McpAutomationBridge"
 BRIDGE_READ_FALLBACK_ENV = "EDS_MCP_ENABLE_EVOLUTION_BRIDGE_READS"
-BRIDGE_WRITE_ENV = "EDS_MCP_ENABLE_EVOLUTION_BRIDGE_WRITES"
 BRIDGE_CALL_TIMEOUT_MS = 10_000
 
 def clean_html(html: str) -> str:
@@ -126,18 +125,6 @@ def get_mail_db_path(account_uid: str) -> Optional[str]:
 def bridge_read_fallback_enabled() -> bool:
     """Return whether read-only operations may call the in-process Evolution bridge."""
     return os.environ.get(BRIDGE_READ_FALLBACK_ENV, "").lower() in {"1", "true", "yes", "on"}
-
-
-def bridge_write_enabled() -> bool:
-    """Return whether mutating mail operations may call the in-process Evolution bridge."""
-    return os.environ.get(BRIDGE_WRITE_ENV, "").lower() in {"1", "true", "yes", "on"}
-
-
-def bridge_writes_disabled_error() -> str:
-    return (
-        "Error: Evolution bridge write operations are disabled by default because the bridge "
-        f"runs inside the Evolution process. Set {BRIDGE_WRITE_ENV}=1 to enable mail write/send tools."
-    )
 
 
 def get_cached_message_path(account_uid: str, message_uid: str, folder_name: str) -> Optional[str]:
@@ -477,9 +464,6 @@ async def move_email_logic(account_uid: str, message_uid: str, source_folder: st
     """
     def _logic():
         try:
-            if not bridge_write_enabled():
-                return bridge_writes_disabled_error()
-
             success, message = call_bridge_method(
                 "MoveMessage",
                 '(ssss)',
@@ -500,9 +484,6 @@ async def mark_as_read_logic(account_uid: str, message_uid: str, folder_name: st
     """Marks an email as read or unread using the D-Bus interface."""
     def _logic():
         try:
-            if not bridge_write_enabled():
-                return bridge_writes_disabled_error()
-
             success, message = call_bridge_method(
                 "MarkAsRead",
                 '(sssb)',
@@ -519,9 +500,6 @@ async def delete_message_logic(account_uid: str, message_uid: str, folder_name: 
     """Deletes an email using the D-Bus interface."""
     def _logic():
         try:
-            if not bridge_write_enabled():
-                return bridge_writes_disabled_error()
-
             success, message = call_bridge_method(
                 "DeleteMessage",
                 '(sss)',
@@ -538,9 +516,6 @@ async def send_mail_logic(account_uid: str, to: str, subject: str, body: str) ->
     """Sends an email using the D-Bus interface."""
     def _logic():
         try:
-            if not bridge_write_enabled():
-                return bridge_writes_disabled_error()
-
             success, message = call_bridge_method(
                 "SendMail",
                 '(ssss)',

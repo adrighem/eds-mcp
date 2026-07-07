@@ -1,11 +1,6 @@
 import pytest
 from unittest.mock import MagicMock
-from eds_mcp.mail import BRIDGE_WRITE_ENV, move_email_logic, delete_message_logic
-
-
-@pytest.fixture(autouse=True)
-def enable_bridge_writes(monkeypatch):
-    monkeypatch.setenv(BRIDGE_WRITE_ENV, "1")
+from eds_mcp.mail import move_email_logic, delete_message_logic
 
 @pytest.fixture
 def mock_gio(mocker):
@@ -101,11 +96,19 @@ async def test_dbus_exception_handling(mock_dbus_proxy, mock_gio):
 
 
 @pytest.mark.asyncio
-async def test_move_email_disabled_by_default(mocker, monkeypatch):
-    monkeypatch.delenv(BRIDGE_WRITE_ENV, raising=False)
-    bridge_call = mocker.patch("eds_mcp.mail.call_bridge_method")
+async def test_send_mail_success(mocker):
+    from eds_mcp.mail import send_mail_logic
 
-    result = await move_email_logic("acc1", "msg1", "Inbox", "Archive")
+    bridge_call = mocker.patch(
+        "eds_mcp.mail.call_bridge_method",
+        return_value=(True, "queued"),
+    )
 
-    assert "bridge write operations are disabled by default" in result
-    bridge_call.assert_not_called()
+    result = await send_mail_logic("acc1", "to@example.test", "Subject", "Body")
+
+    assert "Successfully sent mail: queued" in result
+    bridge_call.assert_called_once_with(
+        "SendMail",
+        '(ssss)',
+        ("acc1", "to@example.test", "Subject", "Body"),
+    )
