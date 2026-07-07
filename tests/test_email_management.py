@@ -1,6 +1,11 @@
 import pytest
 from unittest.mock import MagicMock
-from eds_mcp.mail import move_email_logic, delete_message_logic
+from eds_mcp.mail import BRIDGE_WRITE_ENV, move_email_logic, delete_message_logic
+
+
+@pytest.fixture(autouse=True)
+def enable_bridge_writes(monkeypatch):
+    monkeypatch.setenv(BRIDGE_WRITE_ENV, "1")
 
 @pytest.fixture
 def mock_gio(mocker):
@@ -93,3 +98,14 @@ async def test_dbus_exception_handling(mock_dbus_proxy, mock_gio):
     
     assert "Error: Failed to move email via Evolution D-Bus" in result
     assert "D-Bus error" in result
+
+
+@pytest.mark.asyncio
+async def test_move_email_disabled_by_default(mocker, monkeypatch):
+    monkeypatch.delenv(BRIDGE_WRITE_ENV, raising=False)
+    bridge_call = mocker.patch("eds_mcp.mail.call_bridge_method")
+
+    result = await move_email_logic("acc1", "msg1", "Inbox", "Archive")
+
+    assert "bridge write operations are disabled by default" in result
+    bridge_call.assert_not_called()

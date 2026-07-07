@@ -4,6 +4,8 @@ import json
 import logging
 import asyncio
 import re
+import glob
+import tempfile
 from datetime import datetime
 from typing import Optional
 from email import message_from_string
@@ -21,6 +23,9 @@ logger = logging.getLogger(__name__)
 EVOLUTION_BUS_NAME = "org.gnome.Evolution"
 EVOLUTION_OBJECT_PATH = "/org/gnome/evolution/McpAutomationBridge"
 EVOLUTION_INTERFACE_NAME = "org.gnome.Evolution.McpAutomationBridge"
+BRIDGE_READ_FALLBACK_ENV = "EDS_MCP_ENABLE_EVOLUTION_BRIDGE_READS"
+BRIDGE_WRITE_ENV = "EDS_MCP_ENABLE_EVOLUTION_BRIDGE_WRITES"
+BRIDGE_CALL_TIMEOUT_MS = 10_000
 
 def clean_html(html: str) -> str:
     """Basic HTML to text conversion without external dependencies."""
@@ -115,6 +120,93 @@ def get_mail_db_path(account_uid: str) -> Optional[str]:
     for path in potential_paths:
         if os.path.exists(path):
             return path
+    return None
+
+
+def bridge_read_fallback_enabled() -> bool:
+    """Return whether read-only operations may call the in-process Evolution bridge."""
+    return os.environ.get(BRIDGE_READ_FALLBACK_ENV, "").lower() in {"1", "true", "yes", "on"}
+
+
+def bridge_write_enabled() -> bool:
+    """Return whether mutating mail operations may call the in-process Evolution bridge."""
+    return os.environ.get(BRIDGE_WRITE_ENV, "").lower() in {"1", "true", "yes", "on"}
+
+
+def bridge_writes_disabled_error() -> str:
+    return (
+        "Error: Evolution bridge write operations are disabled by default because the bridge "
+        f"runs inside the Evolution process. Set {BRIDGE_WRITE_ENV}=1 to enable mail write/send tools."
+    )
+
+
+def get_cached_message_path(account_uid: str, message_uid: str, folder_name: str) -> Optional[str]:
+    """Return the cached RFC822 message path for an Evolution message UID."""
+    base_cache = os.path.expanduser(f"~/.cache/evolution/mail/{account_uid}/folders")
+    if not os.path.exists(base_cache):
+        base_cache = os.path.expanduser(f"~/.local/share/evolution/mail/{account_uid}/folders")
+
+    folder_path = os.path.join(base_cache, folder_name, "cur")
+    if not os.path.exists(folder_path):
+        return None
+
+    matches = glob.glob(os.path.join(folder_path, "*", glob.escape(message_uid)))
+    return matches[0] if matches else None
+
+
+def read_cached_message(account_uid: str, message_uid: str, folder_name: str) -> Optional[str]:
+    """Read a locally cached RFC822 message, if Evolution has cached it."""
+    message_path = get_cached_message_path(account_uid, message_uid, folder_name)
+    if not message_path:
+        return None
+
+    with open(message_path, "r", errors="replace") as f:
+        return f.read()
+
+
+def list_attachments_from_message(raw_content: str) -> list[dict[str, str]]:
+    """Return attachment metadata from a raw RFC822 message."""
+    msg = message_from_string(raw_content)
+    attachments = []
+
+    for part in msg.walk():
+        filename = part.get_filename()
+        if not filename:
+            continue
+
+        attachments.append({
+            "filename": filename,
+            "mime_type": part.get_content_type(),
+        })
+
+    return attachments
+
+
+def save_attachment_from_message(raw_content: str, attachment_name: str) -> Optional[str]:
+    """Save an attachment from a raw RFC822 message to a temporary directory."""
+    msg = message_from_string(raw_content)
+    safe_name = os.path.basename(attachment_name)
+    if not safe_name:
+        return None
+
+    for part in msg.walk():
+        if part.get_filename() != attachment_name:
+            continue
+
+        payload = part.get_payload(decode=True)
+        if payload is None:
+            payload = part.get_payload()
+            if isinstance(payload, str):
+                payload = payload.encode(part.get_content_charset() or "utf-8", errors="replace")
+            else:
+                payload = b""
+
+        temp_dir = tempfile.mkdtemp(prefix="eds_mcp_attachment_")
+        dest_path = os.path.join(temp_dir, safe_name)
+        with open(dest_path, "wb") as f:
+            f.write(payload)
+        return dest_path
+
     return None
 
 async def list_mail_accounts_logic() -> str:
@@ -313,32 +405,22 @@ async def get_email_body_logic(account_uid: str, message_uid: str, folder_name: 
     """Retrieves and optimizes the body/content of an email message."""
     def _logic():
         try:
-            # 1. Resolve cache directory
-            base_cache = os.path.expanduser(f"~/.cache/evolution/mail/{account_uid}/folders")
-            if not os.path.exists(base_cache):
-                base_cache = os.path.expanduser(f"~/.local/share/evolution/mail/{account_uid}/folders")
-            
-            folder_path = os.path.join(base_cache, folder_name, "cur")
-            matches = []
-            if os.path.exists(folder_path):
-                # 2. Search for the UID in the hashed subdirectories
-                import glob
-                search_pattern = os.path.join(folder_path, "*", message_uid)
-                matches = glob.glob(search_pattern)
-            
-            raw_content = ""
-            if not matches:
-                try:
-                    from gi.repository import GLib, Gio
-                    proxy = get_dbus_proxy()
-                    result = proxy.call_sync(
-                        "GetMessage",
-                        GLib.Variant('(sss)', (account_uid, message_uid, folder_name)),
-                        Gio.DBusCallFlags.NONE,
-                        -1,
-                        None
+            raw_content = read_cached_message(account_uid, message_uid, folder_name)
+
+            if raw_content is None:
+                if not bridge_read_fallback_enabled():
+                    return (
+                        f"Error: Message content for UID {message_uid} was not found in the local Evolution cache. "
+                        f"Open or sync the message in Evolution first. To allow the in-process Evolution bridge "
+                        f"fallback for read operations, set {BRIDGE_READ_FALLBACK_ENV}=1."
                     )
-                    success, dbus_content = result.unpack()
+
+                try:
+                    success, dbus_content = call_bridge_method(
+                        "GetMessage",
+                        '(sss)',
+                        (account_uid, message_uid, folder_name),
+                    )
                     if success:
                         raw_content = dbus_content
                     else:
@@ -346,11 +428,7 @@ async def get_email_body_logic(account_uid: str, message_uid: str, folder_name: 
                 except Exception as dbus_e:
                     logger.warning(f"D-Bus fallback failed for {message_uid}: {dbus_e}")
                     return f"Error: Message content for UID {message_uid} not found in {folder_name}. It might not be cached locally."
-            else:
-                # 3. Read the file (it's a raw RFC822 message)
-                with open(matches[0], 'r', errors='replace') as f:
-                    raw_content = f.read()
-            
+
             return extract_text_from_message(raw_content)
         except Exception as e:
             logger.exception(f"Failed to read email body for {message_uid}")
@@ -385,7 +463,7 @@ def call_bridge_method(method_name: str, variant_signature: str, parameters: tup
         method_name,
         GLib.Variant(variant_signature, parameters),
         Gio.DBusCallFlags.NONE,
-        -1,
+        BRIDGE_CALL_TIMEOUT_MS,
         None,
     )
     return result.unpack()
@@ -399,6 +477,9 @@ async def move_email_logic(account_uid: str, message_uid: str, source_folder: st
     """
     def _logic():
         try:
+            if not bridge_write_enabled():
+                return bridge_writes_disabled_error()
+
             success, message = call_bridge_method(
                 "MoveMessage",
                 '(ssss)',
@@ -419,6 +500,9 @@ async def mark_as_read_logic(account_uid: str, message_uid: str, folder_name: st
     """Marks an email as read or unread using the D-Bus interface."""
     def _logic():
         try:
+            if not bridge_write_enabled():
+                return bridge_writes_disabled_error()
+
             success, message = call_bridge_method(
                 "MarkAsRead",
                 '(sssb)',
@@ -435,6 +519,9 @@ async def delete_message_logic(account_uid: str, message_uid: str, folder_name: 
     """Deletes an email using the D-Bus interface."""
     def _logic():
         try:
+            if not bridge_write_enabled():
+                return bridge_writes_disabled_error()
+
             success, message = call_bridge_method(
                 "DeleteMessage",
                 '(sss)',
@@ -451,6 +538,9 @@ async def send_mail_logic(account_uid: str, to: str, subject: str, body: str) ->
     """Sends an email using the D-Bus interface."""
     def _logic():
         try:
+            if not bridge_write_enabled():
+                return bridge_writes_disabled_error()
+
             success, message = call_bridge_method(
                 "SendMail",
                 '(ssss)',
@@ -467,6 +557,17 @@ async def list_attachments_logic(account_uid: str, message_uid: str, folder_name
     """Lists attachments for a specific email message."""
     def _logic():
         try:
+            raw_content = read_cached_message(account_uid, message_uid, folder_name)
+            if raw_content is not None:
+                return json.dumps(list_attachments_from_message(raw_content), separators=(',', ':'))
+
+            if not bridge_read_fallback_enabled():
+                return (
+                    f"Error: Message content for UID {message_uid} was not found in the local Evolution cache. "
+                    f"Open or sync the message in Evolution first. To allow the in-process Evolution bridge "
+                    f"fallback for read operations, set {BRIDGE_READ_FALLBACK_ENV}=1."
+                )
+
             success, attachments_json = call_bridge_method(
                 "ListAttachments",
                 '(sss)',
@@ -486,12 +587,26 @@ async def save_attachment_logic(account_uid: str, message_uid: str, folder_name:
     """Saves an attachment to a temporary file and returns the path."""
     def _logic():
         try:
-            import tempfile
-            
-            # Create a secure temporary directory for this attachment
+            raw_content = read_cached_message(account_uid, message_uid, folder_name)
+            if raw_content is not None:
+                dest_path = save_attachment_from_message(raw_content, attachment_name)
+                if dest_path:
+                    return f"Attachment saved to: {dest_path}"
+                return f"Error: Attachment '{attachment_name}' not found."
+
+            if not bridge_read_fallback_enabled():
+                return (
+                    f"Error: Message content for UID {message_uid} was not found in the local Evolution cache. "
+                    f"Open or sync the message in Evolution first. To allow the in-process Evolution bridge "
+                    f"fallback for read operations, set {BRIDGE_READ_FALLBACK_ENV}=1."
+                )
+
             temp_dir = tempfile.mkdtemp(prefix="eds_mcp_attachment_")
-            dest_path = os.path.join(temp_dir, attachment_name)
-            
+            safe_name = os.path.basename(attachment_name)
+            if not safe_name:
+                return "Error: Attachment name is invalid."
+            dest_path = os.path.join(temp_dir, safe_name)
+
             success, message = call_bridge_method(
                 "SaveAttachment",
                 '(sssss)',
@@ -506,6 +621,3 @@ async def save_attachment_logic(account_uid: str, message_uid: str, folder_name:
             return f"Error: {e}. Ensure the MCP automation bridge plugin supports 'SaveAttachment'."
 
     return await asyncio.to_thread(_logic)
-
-
-

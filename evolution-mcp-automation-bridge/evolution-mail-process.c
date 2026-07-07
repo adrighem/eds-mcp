@@ -336,8 +336,7 @@ handle_get_message (GVariant *parameters, GDBusMethodInvocation *invocation)
     }
 
     dw = CAMEL_DATA_WRAPPER (message);
-    byte_array = g_byte_array_new ();
-    stream = camel_stream_mem_new_with_byte_array (byte_array);
+    stream = camel_stream_mem_new ();
     camel_data_wrapper_write_to_stream_sync (dw, stream, NULL, &error);
     
     if (error) {
@@ -346,13 +345,17 @@ handle_get_message (GVariant *parameters, GDBusMethodInvocation *invocation)
         g_free (msg);
         g_clear_error (&error);
     } else {
-        gchar *valid_utf8 = g_utf8_make_valid ((const gchar *)byte_array->data, byte_array->len);
-        g_dbus_method_invocation_return_value (invocation, g_variant_new ("(bs)", TRUE, valid_utf8));
-        g_free (valid_utf8);
+        byte_array = camel_stream_mem_get_byte_array (CAMEL_STREAM_MEM (stream));
+        if (!byte_array) {
+            g_dbus_method_invocation_return_value (invocation, g_variant_new ("(bs)", FALSE, "Message stream did not produce data"));
+        } else {
+            gchar *valid_utf8 = g_utf8_make_valid ((const gchar *)byte_array->data, byte_array->len);
+            g_dbus_method_invocation_return_value (invocation, g_variant_new ("(bs)", TRUE, valid_utf8));
+            g_free (valid_utf8);
+        }
     }
 
     g_object_unref (stream);
-    g_byte_array_free (byte_array, TRUE);
     g_object_unref (message);
     g_object_unref (folder_obj);
     g_object_unref (service);
@@ -372,10 +375,10 @@ list_attachments_cb (CamelMimePart *part, gpointer user_data)
     if (filename) {
         JsonObject *obj = json_object_new ();
         CamelDataWrapper *dw = camel_medium_get_content (CAMEL_MEDIUM (part));
-        const gchar *mime_type = camel_data_wrapper_get_mime_type (dw);
+        const gchar *mime_type = dw ? camel_data_wrapper_get_mime_type (dw) : "application/octet-stream";
         
         json_object_set_string_member (obj, "filename", filename);
-        json_object_set_string_member (obj, "mime_type", mime_type);
+        json_object_set_string_member (obj, "mime_type", mime_type ? mime_type : "application/octet-stream");
         
         json_array_add_object_element (data->array, obj);
     }
@@ -402,6 +405,11 @@ handle_list_attachments (GVariant *parameters, GDBusMethodInvocation *invocation
     }
 
     shell_backend = e_shell_get_backend_by_name (shell, "mail");
+    if (!shell_backend) {
+        g_dbus_method_invocation_return_value (invocation, g_variant_new ("(bs)", FALSE, "Mail backend not found"));
+        return;
+    }
+
     backend = E_MAIL_BACKEND (shell_backend);
     session = e_mail_backend_get_session (backend);
 
@@ -466,12 +474,17 @@ save_attachment_cb (CamelMimePart *part, gpointer user_data)
     SaveAttachmentData *data = user_data;
     const gchar *filename;
     
-    if (data->found) return;
+    if (data->found || data->error) return;
 
     filename = camel_mime_part_get_filename (part);
     if (filename && g_strcmp0 (filename, data->target_name) == 0) {
         CamelDataWrapper *dw = camel_medium_get_content (CAMEL_MEDIUM (part));
         CamelStream *stream;
+
+        if (!dw) {
+            data->error = g_error_new_literal (G_IO_ERROR, G_IO_ERROR_FAILED, "Attachment has no content");
+            return;
+        }
         
         stream = camel_stream_fs_new_with_name (data->dest_path, O_CREAT | O_WRONLY | O_TRUNC, 0666, &data->error);
         if (stream) {
@@ -504,6 +517,11 @@ handle_save_attachment (GVariant *parameters, GDBusMethodInvocation *invocation)
     }
 
     shell_backend = e_shell_get_backend_by_name (shell, "mail");
+    if (!shell_backend) {
+        g_dbus_method_invocation_return_value (invocation, g_variant_new ("(bs)", FALSE, "Mail backend not found"));
+        return;
+    }
+
     backend = E_MAIL_BACKEND (shell_backend);
     session = e_mail_backend_get_session (backend);
 
@@ -775,6 +793,9 @@ e_plugin_ui_init (gpointer ui_manager, gpointer user_data)
         return TRUE;
 
     g_print ("CUSTOM INSTRUMENTATION PLUGIN LOADING in %s (PID %d)\n", prgname, (int)getpid());
+
+    if (registration_id > 0)
+        return TRUE;
 
     if (!global_conn) {
         global_conn = g_bus_get_sync (G_BUS_TYPE_SESSION, NULL, &error);

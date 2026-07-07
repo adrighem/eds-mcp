@@ -62,6 +62,10 @@ make install-bridge
 ```
 *Note: This will install build dependencies, compile the C plugin, and install it into Evolution's plugin directory. It may prompt for your sudo password.*
 
+Read-only mail body and attachment tools use Evolution's local message cache by default. If a message is not cached locally, the tool returns an error instead of calling into Evolution. The older in-process bridge fallback can be enabled with `EDS_MCP_ENABLE_EVOLUTION_BRIDGE_READS=1`, but it is intentionally opt-in because bridge code runs inside the Evolution process.
+
+Mail write/send tools are also disabled by default for the same reason. Set `EDS_MCP_ENABLE_EVOLUTION_BRIDGE_WRITES=1` to enable moving, deleting, marking, or sending mail through the Evolution bridge.
+
 ### 2. Add as an MCP Server to Gemini
 Add the following configuration to your Gemini/Claude config file (usually `~/.config/Gemini/config.json` or via the CLI):
 
