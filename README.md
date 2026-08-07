@@ -1,110 +1,182 @@
-# Evolution Data Server (EDS) MCP Server
+# Evolution Data Server MCP
 
-An MCP server that integrates with the GNOME Evolution Data Server (EDS). This allows Gemini to directly read your local calendar and contacts configured in GNOME Evolution (e.g., via Office365).
+[![CI](https://github.com/adrighem/eds-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/adrighem/eds-mcp/actions/workflows/ci.yml)
 
-## Features
+Connect an MCP-compatible assistant to calendars, tasks, memos, contacts, and
+mail already synced by [GNOME Evolution](https://gitlab.gnome.org/GNOME/evolution)
+on Linux.
 
-### Resources
-- **eds://calendars**: Read all available and enabled calendars.
-- **eds://mail/accounts**: Read all configured and enabled email accounts.
-- **eds://mail/{account_uid}/folders**: Read the list of folders for a specific email account.
+`eds-mcp` uses Evolution Data Server instead of asking for separate provider
+credentials. It works with accounts supported by Evolution, including Microsoft
+365 and Exchange accounts configured through Evolution EWS.
 
-### Tools
-- **get_calendar_events**: Retrieve calendar events for the coming days.
-- **create_calendar_event**: Create a new event in a specific calendar.
-- **update_calendar_event**: Update the summary or description of an existing calendar event.
-- **delete_calendar_event**: Delete an event or a specific recurrence from a calendar.
-- **search_contacts**: Search for contacts in your Evolution address book.
-- **get_emails**: Retrieve recent emails from a specific folder.
-- **search_emails**: Search emails across folders.
-- **send_email**: Send an email, optionally with local file attachments or as a threaded reply.
-- **mark_email_as_read**: Mark an email as read or unread.
-- **move_email**: Move an email to a different folder.
-- **delete_email**: Delete an email.
-- **get_email_body**: Retrieve the full body of an email.
-- **list_attachments**: List all attachments for a specific email.
-- **download_attachment**: Save an attachment to a local file.
-- **read_document**: Extract text from a document.
+> [!IMPORTANT]
+> The server reads personal data from your local Evolution profile and returns
+> it to your MCP client. Your client and model decide where that returned data
+> is processed. Use only clients you trust.
 
-### Prompts
-- **schedule_today**: A prompt to generate a schedule for today based on the user's agenda.
-- **contact_dossier**: Gather information about a specific contact.
+## What can it do?
 
-## Accessing Microsoft Outlook Calendars
+- **Calendars:** Browse calendars, find recurring events, view a day or date
+  range, create or edit events, delete events, and check EWS free/busy
+  information.
+- **Tasks and memos:** Discover enabled lists, search items, and build a focused
+  view for today.
+- **Contacts:** Find people by name or email across enabled Evolution address
+  books.
+- **Mail:** Browse accounts and folders, list or search messages, read cached
+  bodies, work with attachments, and optionally send or manage mail.
+- **Daily overview:** Combine today's events, tasks, and recent inbox messages
+  into one summary.
+- **Documents:** Extract text from downloaded PDF, DOCX, XLSX, TXT, Markdown,
+  CSV, and JSON files.
 
-This MCP server relies on the GNOME Evolution Data Server (EDS). This means that to access Microsoft Outlook (Exchange or Office 365) calendars and contacts from your Linux system, you need to configure them in GNOME Evolution first:
+Once connected, try prompts such as:
 
-1. Install GNOME Evolution and `evolution-ews` (the Exchange Web Services plugin).
-2. Open Evolution and add a new account.
-3. Choose "Exchange Web Services" (EWS) or "Outlook" as the server type and log in.
-4. Ensure the calendars and contacts you want to access are enabled in Evolution's sidebar.
-5. Once synced, `eds-mcp` will automatically discover and be able to read these calendars through EDS.
+- "What is on my calendar today?"
+- "Show my open tasks and important recent email."
+- "Find Ada's email address."
+- "Download the invoice attachment and summarize it."
+- "When is my colleague free this week?"
 
-## Installation & Usage via `uv`
+## Before you start
 
-This project uses `uv` for package management. Because EDS bindings (`PyGObject`) often depend on system libraries, we recommend using `uv` in combination with system packages if necessary.
+You need:
 
-### 1. Preparing the project
+- Linux with a user D-Bus session
+- Python 3.12 or newer
+- Evolution and Evolution Data Server
+- PyGObject bindings for your distribution's Python
+- [`uv`](https://docs.astral.sh/uv/getting-started/installation/)
+
+The documented installation path targets Debian and Ubuntu. Other Linux
+distributions can work with equivalent Evolution, EDS, and GI packages.
+
+On Debian or Ubuntu, start with:
+
 ```bash
-cd /path/to/src/eds-mcp
-uv venv --system-site-packages
-source .venv/bin/activate
-uv pip install -e .
+sudo apt install evolution evolution-data-server python3-gi
 ```
 
-### Automation Bridge (Required for modifying emails)
+For Microsoft 365 or Exchange, also install `evolution-ews`. Add the account in
+Evolution, enable the calendars, address books, and mail folders you want, then
+let Evolution finish its first sync.
 
-This server relies on a custom Evolution plugin to perform destructive actions like moving or deleting emails.
+## Quick start
 
-To install the bridge, run:
+Clone the project and create a virtual environment that can see your system GI
+bindings:
+
 ```bash
-make install-bridge
+git clone https://github.com/adrighem/eds-mcp.git
+cd eds-mcp
+uv venv --python /usr/bin/python3 --system-site-packages
+uv sync --locked --no-dev
 ```
-*Note: This will install build dependencies, compile the C plugin, and install it into Evolution's plugin directory. It may prompt for your sudo password.*
 
-Read-only mail body and attachment tools use Evolution's local message cache by default. If a message is not cached locally, the tool returns an error instead of calling into Evolution. The older in-process bridge fallback can be enabled with `EDS_MCP_ENABLE_EVOLUTION_BRIDGE_READS=1`, but it is intentionally opt-in because bridge code runs inside the Evolution process.
-
-Mail write/send tools use the Evolution bridge directly for moving, deleting, marking, and sending mail. Outgoing attachments are limited to 10 files and 20 MiB total.
-
-### 2. Add as an MCP Server to Gemini
-Add the following configuration to your Gemini/Claude config file (usually `~/.config/Gemini/config.json` or via the CLI):
+Add the installed executable to your MCP client's server configuration. The
+configuration file location varies by client, but the common JSON shape is:
 
 ```json
 {
   "mcpServers": {
-    "eds": {
-      "command": "uv",
-      "args": [
-        "--directory",
-        "/path/to/src/eds-mcp",
-        "run",
-        "eds-mcp"
-      ]
+    "evolution": {
+      "command": "/absolute/path/to/eds-mcp/.venv/bin/eds-mcp"
     }
   }
 }
 ```
 
-## Manual Testing
-You can also run the server directly to see if it starts:
+Replace the example with the real absolute path, restart your MCP client, and
+ask it what is on your calendar today.
+
+To check startup manually:
+
 ```bash
-uv run eds-mcp
+.venv/bin/eds-mcp
 ```
 
-## Development
+The server waits for MCP messages on standard input, so silence is normal. Any
+startup error appears on standard error. Press `Ctrl+C` to stop it.
 
-Useful local checks:
+## Optional mail automation bridge
+
+Calendar changes use EDS directly. Basic mail listing and search also work
+without the bridge by reading Evolution's local index and message cache.
+
+Install the bridge when you want to:
+
+- send email or threaded replies
+- attach local files to outgoing email
+- move or delete messages
+- mark messages read or unread
+- retrieve uncached message content through Evolution's process
+
+From the repository root, run:
+
 ```bash
-make test
-make lock-check
-make check
+make install-bridge
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for setup details, project layout, and
-the difference between the default Python unit suite and the live Evolution
-bridge integration test.
+The installer is Debian/Ubuntu-oriented. It may install build packages with
+`sudo`, builds a native Evolution plugin, installs it into the system plugin
+directory, and closes Evolution so the new plugin can load. Save any drafts
+first, then launch Evolution again.
 
-## Requirements
-- Linux with GNOME
-- `evolution-data-server` and the corresponding `-dev` packages.
-- `python3-gi` (PyGObject bindings)
+Verify the running bridge with:
+
+```bash
+.venv/bin/python scripts/ping_bridge.py
+```
+
+See the [bridge guide](evolution-mcp-automation-bridge/README.md) for details.
+
+> [!WARNING]
+> Mail and calendar write tools act immediately when your MCP client calls
+> them. The server has no confirmation screen. Enable tool approval in your
+> client and review send, move, delete, and calendar-change requests carefully.
+
+## Limits and data behavior
+
+- Mail search uses Evolution's cached subject, sender, and preview metadata. It
+  does not search complete message bodies.
+- Full bodies and attachments normally require the message to be synced in
+  Evolution's local cache. Open or sync a missing message in Evolution first.
+- Email body output is limited to 10,000 characters.
+- Outgoing mail accepts at most 10 attachments and 20 MiB total.
+- Document parsing accepts files up to 5 MiB and returns at most 30,000
+  characters.
+- Downloaded attachments are written to a temporary directory.
+- `read_document` can read any supported local file available to the server
+  process. Do not expose this server to an untrusted MCP client.
+
+## Troubleshooting
+
+### Only `system_status` is available
+
+The Python process cannot load PyGObject or the EDS introspection libraries.
+Use your distribution's Python when creating the virtual environment and make
+sure Evolution, EDS, and `python3-gi` are installed.
+
+### Calendars, contacts, or folders are missing
+
+Open Evolution, enable the source in its sidebar, and let it finish syncing.
+The server only discovers enabled EDS sources.
+
+### An email body or attachment is not found
+
+Open or sync that message in Evolution so it enters the local cache. Advanced
+users can opt into bridge-based reads by setting
+`EDS_MCP_ENABLE_EVOLUTION_BRIDGE_READS=1` for the MCP server.
+
+### Sending or changing mail fails
+
+Make sure Evolution is running, the automation bridge is installed, and the
+bridge check above succeeds.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, project layout,
+tests, and bridge integration checks.
+
+Licensed under the [MIT License](LICENSE).

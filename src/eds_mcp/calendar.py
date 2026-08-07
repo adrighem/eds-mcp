@@ -36,7 +36,7 @@ def get_component_summary(comp) -> str:
         summary_obj = comp.get_summary()
         if not summary_obj:
             return "No Summary"
-            
+
         if hasattr(summary_obj, 'get_value'):
             return summary_obj.get_value()
         elif hasattr(summary_obj, 'get_value_as_string'):
@@ -58,7 +58,7 @@ async def list_sources_logic(source_type: ECal.ClientSourceType) -> str:
                 ECal.ClientSourceType.TASKS: EDataServer.SOURCE_EXTENSION_TASK_LIST,
                 ECal.ClientSourceType.MEMOS: EDataServer.SOURCE_EXTENSION_MEMO_LIST
             }[source_type]
-            
+
             sources = registry.list_sources(extension)
             result = []
             for source in sources:
@@ -69,7 +69,7 @@ async def list_sources_logic(source_type: ECal.ClientSourceType) -> str:
                         parent_source = registry.ref_source(parent_uid)
                         if parent_source:
                             parent_name = parent_source.get_display_name()
-                    
+
                     result.append({
                         "uid": source.get_uid(),
                         "name": source.get_display_name(),
@@ -80,14 +80,14 @@ async def list_sources_logic(source_type: ECal.ClientSourceType) -> str:
         except Exception as e:
             logger.exception(f"Failed to list sources for {source_type}")
             return f"Error: {e}"
-            
+
     return await asyncio.to_thread(_logic)
 
 async def get_items_logic(
     source_type: ECal.ClientSourceType,
-    days_ahead: int = 7, 
-    days_back: int = 0, 
-    query: Optional[str] = None, 
+    days_ahead: int = 7,
+    days_back: int = 0,
+    query: Optional[str] = None,
     uid: Optional[str] = None,
     date_str: Optional[str] = None,
     summary_only: bool = False
@@ -101,7 +101,7 @@ async def get_items_logic(
                 ECal.ClientSourceType.TASKS: EDataServer.SOURCE_EXTENSION_TASK_LIST,
                 ECal.ClientSourceType.MEMOS: EDataServer.SOURCE_EXTENSION_MEMO_LIST
             }[source_type]
-            
+
             target_sources = []
             if uid:
                 source = registry.ref_source(uid)
@@ -112,7 +112,7 @@ async def get_items_logic(
                 for source in sources:
                     if source.get_enabled():
                         target_sources.append(source)
-            
+
             if not target_sources:
                 return f"Error: No enabled sources found for {extension}."
 
@@ -128,13 +128,13 @@ async def get_items_logic(
                         target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
                     except ValueError:
                         return f"Error: Invalid date format '{date_str}'. Use 'today', 'tomorrow', or 'YYYY-MM-DD'."
-                
+
                 start_time = datetime.combine(target_date, datetime.min.time())
                 end_time = datetime.combine(target_date, datetime.max.time())
             else:
                 start_time = (now - timedelta(days=days_back)).replace(hour=0, minute=0, second=0, microsecond=0)
                 end_time = (now + timedelta(days=days_ahead)).replace(hour=23, minute=59, second=59, microsecond=999999)
-            
+
             start_ts = int(start_time.timestamp())
             end_ts = int(end_time.timestamp())
 
@@ -145,32 +145,32 @@ async def get_items_logic(
                     source_uid = source.get_uid()
                     source_name = source.get_display_name()
                     items = []
-                    
+
                     def _actual_cb(comp, start, end, data, cancellable):
                         summary = get_component_summary(comp)
                         if query and query.lower() not in summary.lower():
                             return True
-                            
+
                         rid_val = comp.get_recurrenceid()
                         rid_str = rid_val.as_ical_string() if rid_val else None
                         if rid_str == "00000000T000000":
                             rid_str = None
-                            
+
                         item = {
                             "uid": comp.get_uid(),
                             "summary": summary.strip() if summary else ""
                         }
-                        
+
                         if rid_str:
                             item["rid"] = rid_str
-                            
+
                         # Add start/end if they differ or are meaningful
                         s_str = ical_time_to_local_string(start)
                         e_str = ical_time_to_local_string(end)
                         item["start"] = s_str
                         if s_str != e_str:
                             item["end"] = e_str
-                            
+
                         # Extract attendees
                         attendees = []
                         att_prop = comp.get_first_property(ICalGLib.PropertyKind.ATTENDEE_PROPERTY)
@@ -179,7 +179,7 @@ async def get_items_logic(
                             if email:
                                 cn_param = att_prop.get_first_parameter(ICalGLib.ParameterKind.CN_PARAMETER)
                                 name = cn_param.get_cn() if cn_param else None
-                                
+
                                 partstat_param = att_prop.get_first_parameter(ICalGLib.ParameterKind.PARTSTAT_PARAMETER)
                                 status = "NEEDS-ACTION"
                                 if partstat_param:
@@ -200,7 +200,7 @@ async def get_items_logic(
                                         status = "IN-PROCESS"
                                     else:
                                         status = str(partstat_enum)
-                                
+
                                 if email.startswith("mailto:"):
                                     email = email[7:]
                                 attendees.append({
@@ -209,16 +209,16 @@ async def get_items_logic(
                                     "status": status
                                 })
                             att_prop = comp.get_next_property(ICalGLib.PropertyKind.ATTENDEE_PROPERTY)
-                        
+
                         if attendees:
                             item["attendees"] = attendees
-                        
+
                         # Add task specific fields
                         if source_type == ECal.ClientSourceType.TASKS:
                             prop = comp.get_first_property(ICalGLib.PropertyKind.PERCENTCOMPLETE_PROPERTY)
                             if prop:
                                 item["pc"] = prop.get_percentcomplete() # Shorter key
-                        
+
                         items.append(item)
                         return True
 
@@ -229,7 +229,7 @@ async def get_items_logic(
                             "uid": source_uid,
                             "items": items
                         }
-                    
+
                 except Exception:
                     logger.exception(f"Failed to process source '{source.get_display_name()}'")
                     continue
@@ -237,7 +237,7 @@ async def get_items_logic(
             if summary_only:
                 if not results:
                     return "No items found for this period."
-                
+
                 output = []
                 for source_name, data in results.items():
                     output.append(f"### {source_name}")
@@ -251,11 +251,11 @@ async def get_items_logic(
                                 time_str += f" - {end_dt.strftime('%H:%M')}"
                         except:
                             time_str = item["start"]
-                            
+
                         summary = item["summary"]
                         if source_type == ECal.ClientSourceType.TASKS and "pc" in item:
                             summary += f" ({item['pc']}% complete)"
-                            
+
                         output.append(f"* **{time_str}**: {summary}")
                     output.append("")
                 return "\n".join(output).strip()
@@ -283,10 +283,17 @@ async def get_tasks_logic(days_ahead=30, days_back=30, query=None, task_list_uid
 async def list_memos_logic() -> str:
     return await list_sources_logic(ECal.ClientSourceType.MEMOS)
 
-async def get_memos_logic(query=None, memo_list_uid=None) -> str:
-    # Memos don't usually have a meaningful start/end date range in the same way, 
+async def get_memos_logic(query=None, memo_list_uid=None, summary_only=False) -> str:
+    # Memos don't usually have a meaningful start/end date range in the same way,
     # but we use a large range to catch them.
-    return await get_items_logic(ECal.ClientSourceType.MEMOS, days_ahead=365, days_back=365, query=query, uid=memo_list_uid)
+    return await get_items_logic(
+        ECal.ClientSourceType.MEMOS,
+        days_ahead=365,
+        days_back=365,
+        query=query,
+        uid=memo_list_uid,
+        summary_only=summary_only,
+    )
 
 async def get_free_busy_logic(email: str, days_ahead: int, days_back: int, primary_cal_uid: str) -> List[Dict[str, Any]]:
     """Fetches free/busy information for a given email address using ICalGLib for parsing."""
@@ -296,18 +303,18 @@ async def get_free_busy_logic(email: str, days_ahead: int, days_back: int, prima
             source = registry.ref_source(primary_cal_uid)
             if not source:
                 return []
-                
+
             client = ECal.Client.connect_sync(source, ECal.ClientSourceType.EVENTS, 30, None)
-            
+
             now = datetime.now()
             start_time = (now - timedelta(days=days_back)).replace(hour=0, minute=0, second=0, microsecond=0)
             end_time = (now + timedelta(days=days_ahead)).replace(hour=23, minute=59, second=59, microsecond=999999)
-            
+
             start_ts = int(start_time.timestamp())
             end_ts = int(end_time.timestamp())
-            
+
             success, components = client.get_free_busy_sync(start_ts, end_ts, [email], None)
-            
+
             fb_events = []
             for comp in components:
                 ical_comp = comp.get_icalcomponent()
@@ -329,7 +336,7 @@ async def get_free_busy_logic(email: str, days_ahead: int, days_back: int, prima
                                 fb_type = "Free"
                             else:
                                 fb_type = str(fb_enum)
-                        
+
                         fb_events.append({
                             "type": fb_type,
                             "start": ical_time_to_local_string(fb.get_start()),
@@ -354,10 +361,27 @@ async def get_shared_calendar_events_logic(
     if "@" not in query:
         from .contacts import search_contacts_logic
         contacts_json = await search_contacts_logic(query)
-        contacts = json.loads(contacts_json)
-        if contacts and contacts[0].get("emails"):
-            email = contacts[0]["emails"][0]
-        else:
+
+        try:
+            contact_books = json.loads(contacts_json)
+        except (json.JSONDecodeError, TypeError):
+            contact_books = {}
+        if not isinstance(contact_books, dict):
+            contact_books = {}
+
+        email = next(
+            (
+                address
+                for contacts in contact_books.values()
+                if isinstance(contacts, list)
+                for contact in contacts
+                if isinstance(contact, dict)
+                for address in contact.get("emails", [])
+                if isinstance(address, str) and address
+            ),
+            None,
+        )
+        if not email:
             return json.dumps({"error": f"Could not find email for '{query}'"})
 
     # 2. Find primary calendar to use its connection
@@ -366,14 +390,14 @@ async def get_shared_calendar_events_logic(
         sources = registry.list_sources(None)
         ews_parent_uid = None
         primary_cal_uid = None
-        
+
         for s in sources:
             if s.has_extension(EDataServer.SOURCE_EXTENSION_COLLECTION):
                 coll = s.get_extension(EDataServer.SOURCE_EXTENSION_COLLECTION)
                 if coll.get_backend_name() == 'ews':
                     ews_parent_uid = s.get_uid()
                     break
-        
+
         if not ews_parent_uid:
             return None, "No EWS account found to support free/busy queries."
 
@@ -384,14 +408,12 @@ async def get_shared_calendar_events_logic(
 
         if not primary_cal_uid:
             return None, "Could not find primary calendar for EWS connection."
-            
+
         return primary_cal_uid, None
 
-    res = await asyncio.to_thread(_find_primary)
-    if isinstance(res, tuple) and res[1]:
-        return json.dumps({"error": res[1]})
-    
-    primary_cal_uid = res
+    primary_cal_uid, error = await asyncio.to_thread(_find_primary)
+    if error:
+        return json.dumps({"error": error})
 
     try:
         # We use the primary account's connection to query Free/Busy for any organizational user.
@@ -415,13 +437,13 @@ async def create_calendar_event_logic(calendar_uid: str, ical_data: str) -> str:
             source = registry.ref_source(calendar_uid)
             if not source:
                 return f"Error: Calendar {calendar_uid} not found."
-                
+
             client = ECal.Client.connect_sync(source, ECal.ClientSourceType.EVENTS, 30, None)
-            
+
             comp = ICalGLib.Component.new_from_string(ical_data)
             if not comp:
                 return "Error: Invalid iCal data."
-                
+
             success, new_uid = client.create_object_sync(comp, ECal.OperationFlags.NONE, None)
             return f"Successfully created event: {new_uid}" if success else "Failed to create event."
         except Exception as e:
@@ -436,21 +458,21 @@ async def delete_calendar_event_logic(calendar_uid: str, event_uid: str, event_r
         nonlocal event_rid
         if event_rid == "00000000T000000" or event_rid == "":
             event_rid = None
-            
+
         try:
             registry = EDataServer.SourceRegistry.new_sync(None)
             source = registry.ref_source(calendar_uid)
             if not source:
                 return f"Error: Calendar {calendar_uid} not found."
-                
+
             client = ECal.Client.connect_sync(source, ECal.ClientSourceType.EVENTS, 30, None)
-            
+
             # Using THIS for simple removal or removing all recurring
             mod = ECal.ObjModType.THIS
             if not event_rid:
                 # If no recurrence ID is provided, removing the entire series/event makes sense
                 mod = ECal.ObjModType.ALL
-                
+
             success = client.remove_object_sync(event_uid, event_rid, mod, ECal.OperationFlags.NONE, None)
             return f"Successfully deleted event {event_uid}." if success else f"Failed to delete event {event_uid}."
         except Exception as e:
@@ -460,8 +482,8 @@ async def delete_calendar_event_logic(calendar_uid: str, event_uid: str, event_r
     return await asyncio.to_thread(_logic)
 
 async def update_calendar_event_logic(
-    calendar_uid: str, 
-    event_uid: str, 
+    calendar_uid: str,
+    event_uid: str,
     event_rid: Optional[str] = None,
     summary: Optional[str] = None,
     description: Optional[str] = None
@@ -474,29 +496,29 @@ async def update_calendar_event_logic(
             if not source:
                 return f"Error: Calendar {calendar_uid} not found."
             client = ECal.Client.connect_sync(source, ECal.ClientSourceType.EVENTS, 30, None)
-            
+
             # Get the object
             success, icalcomp = client.get_object_sync(event_uid, event_rid, None)
             if not success or not icalcomp:
                 return f"Error: Event {event_uid} not found."
-                
+
             comp = ECal.Component.new_from_icalcomponent(icalcomp)
-            
+
             if summary is not None:
                 txt = ECal.ComponentText.new(summary, None)
                 comp.set_summary(txt)
-            
+
             if description is not None:
                 txt = ECal.ComponentText.new(description, None)
                 comp.set_descriptions([txt])
-            
+
             # Save modifications
             mod = ECal.ObjModType.THIS
             if not event_rid:
                 mod = ECal.ObjModType.ALL
-                
+
             success = client.modify_object_sync(comp.get_icalcomponent(), mod, ECal.OperationFlags.NONE, None)
-            
+
             return f"Successfully updated event {event_uid}." if success else f"Failed to update event {event_uid}."
         except Exception as e:
             logger.exception("Failed to update event")

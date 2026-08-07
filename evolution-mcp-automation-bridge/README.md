@@ -1,52 +1,80 @@
-# Evolution MCP Automation Bridge
+# Evolution Mail Automation Bridge
 
-This is an Evolution EPlugin that exposes a D-Bus interface for programmatic control of the Evolution Mail client. It is primarily designed to act as a bridge for the **EDS Model Context Protocol (MCP)** server, allowing AI agents to perform actions like moving or deleting messages directly through the Evolution UI state.
+This optional Evolution plugin gives `eds-mcp` access to mail actions that are
+not available through Evolution Data Server alone.
 
-## Features
+Evolution must be running for the bridge to work. The bridge uses your current
+desktop user's D-Bus session and does not expose a network service.
 
-- **MoveMessage**: Move emails between folders within an account.
-- **DeleteMessage**: Securely mark messages for deletion and synchronize the folder.
-- **SendMail**: Send plain-text messages.
-- **SendMailWithAttachments**: Send plain-text messages with local attachments and optional reply-thread headers.
-- **D-Bus Interface**: Exposed at `org.gnome.Evolution.McpAutomationBridge`.
+## When do I need it?
 
-## Installation
+You do not need the bridge to list accounts and folders, search indexed mail,
+or read messages already present in Evolution's local cache.
 
-### Prerequisites
+Install it to let `eds-mcp`:
 
-You will need Evolution development headers and standard build tools:
+- send plain-text email
+- send local attachments
+- preserve reply threading headers
+- move or delete messages
+- mark messages read or unread
+- fetch uncached bodies and attachments when bridge reads are enabled
 
-\`\`\`bash
-sudo apt install build-essential pkg-config cmake evolution-dev libemail-engine-dev libedataserver1.2-dev libcamel1.2-dev
-\`\`\`
+## Install
 
-### Build and Install
+The installer targets Debian and Ubuntu systems. It needs standard C build
+tools plus Evolution development headers, and it uses `sudo` to install the
+plugin into Evolution's system plugin directory.
 
-Use the provided install script:
+From the `eds-mcp` repository root:
 
-\`\`\`bash
-cd scripts
-./install.sh
-\`\`\`
+```bash
+make install-bridge
+```
 
-This will:
-1. Compile the plugin using CMake.
-2. Install the shared library to Evolution's plugin directory (e.g., \`/usr/lib/evolution/plugins\`).
-3. Force-shutdown Evolution to ensure the new plugin is loaded on next start.
+The installer may install missing build packages, compiles the plugin, and
+closes Evolution so the plugin can load cleanly. Save open drafts before
+starting. Launch Evolution again after installation.
 
-## Usage
+Installer output is also saved to
+`/tmp/evolution_mcp_automation_bridge_install.log` for troubleshooting.
 
-The plugin registers a D-Bus object at:
-- **Service**: \`org.gnome.Evolution\`
-- **Path**: \`/org/gnome/evolution/McpAutomationBridge\`
-- **Interface**: \`org.gnome.Evolution.McpAutomationBridge\`
+## Verify
 
-### Example: Delete a message via busctl
+With Evolution running, return to the repository root and run:
 
-\`\`\`bash
-busctl --user call org.gnome.Evolution /org/gnome/evolution/McpAutomationBridge org.gnome.Evolution.McpAutomationBridge DeleteMessage sss "account_uid" "message_uid" "folder_name"
-\`\`\`
+```bash
+.venv/bin/python scripts/ping_bridge.py
+```
 
-## Integration with EDS MCP
+A successful result confirms that the D-Bus service is available to the same
+desktop user.
 
-This bridge is required for the full functionality of the [eds-mcp](https://github.com/adrighem/eds-mcp) server.
+## Troubleshooting
+
+### Build dependencies are missing
+
+The build checks for Evolution Shell, Evolution Mail, Camel, EDataServer,
+ECal, EBook, GLib, Gio, and JSON-GLib development packages through
+`pkg-config`. Package names vary across distributions.
+
+### The bridge cannot be found
+
+- Start Evolution after installing the plugin.
+- Run the bridge check from the same desktop session as Evolution.
+- Confirm your distribution's Evolution plugin directory is one of the paths
+  detected by the installer.
+- Reinstall after upgrading Evolution if its plugin ABI or install path changed.
+
+### Cached reads work, but mail changes fail
+
+Cached reads happen in the MCP server process. Sending, moving, deleting, and
+read-state changes require this plugin and a running Evolution process.
+
+## D-Bus interface
+
+- Service: `org.gnome.Evolution`
+- Object path: `/org/gnome/evolution/McpAutomationBridge`
+- Interface: `org.gnome.Evolution.McpAutomationBridge`
+
+The bridge is a companion to the main [eds-mcp project](https://github.com/adrighem/eds-mcp).
