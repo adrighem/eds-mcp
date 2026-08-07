@@ -1,6 +1,8 @@
 #include <glib.h>
+#include <glib/gstdio.h>
 #include <gio/gio.h>
 #include <json-glib/json-glib.h>
+#include <sys/stat.h>
 
 typedef struct _EBookClientView EBookClientView;
 typedef struct _EBookClient EBookClient;
@@ -17,6 +19,9 @@ typedef struct _EDestination EDestination;
 static GDBusNodeInfo *introspection_data = NULL;
 static guint registration_id = 0;
 static GDBusConnection *global_conn = NULL;
+
+#define MAX_ATTACHMENT_COUNT 10
+#define MAX_ATTACHMENT_TOTAL_BYTES (20 * 1024 * 1024)
 
 static const gchar xml[] = 
     "<node>"
@@ -72,6 +77,17 @@ static const gchar xml[] =
     "      <arg type='s' name='to' direction='in'/>\n"
     "      <arg type='s' name='subject' direction='in'/>\n"
     "      <arg type='s' name='body' direction='in'/>\n"
+    "      <arg type='b' name='success' direction='out'/>\n"
+    "      <arg type='s' name='message' direction='out'/>\n"
+    "    </method>\n"
+    "    <method name='SendMailWithAttachments'>\n"
+    "      <arg type='s' name='account_uid' direction='in'/>\n"
+    "      <arg type='s' name='to' direction='in'/>\n"
+    "      <arg type='s' name='subject' direction='in'/>\n"
+    "      <arg type='s' name='body' direction='in'/>\n"
+    "      <arg type='as' name='attachment_paths' direction='in'/>\n"
+    "      <arg type='s' name='in_reply_to' direction='in'/>\n"
+    "      <arg type='s' name='references' direction='in'/>\n"
     "      <arg type='b' name='success' direction='out'/>\n"
     "      <arg type='s' name='message' direction='out'/>\n"
     "    </method>\n"
@@ -573,15 +589,148 @@ handle_save_attachment (GVariant *parameters, GDBusMethodInvocation *invocation)
     g_object_unref (service);
 }
 
+static gboolean
+header_value_is_safe (const gchar *value)
+{
+    return value == NULL || (strchr (value, '\r') == NULL && strchr (value, '\n') == NULL);
+}
+
+static gboolean
+set_message_content (CamelMimeMessage *message,
+                     const gchar *body,
+                     gchar **attachment_paths,
+                     GError **error)
+{
+    guint attachment_count;
+    guint64 total_bytes = 0;
+    CamelMultipart *multipart;
+    CamelMimePart *part;
+
+    if (!attachment_paths || !attachment_paths[0]) {
+        camel_mime_part_set_content (
+            CAMEL_MIME_PART (message), body, strlen (body), "text/plain; charset=utf-8");
+        return TRUE;
+    }
+
+    attachment_count = g_strv_length (attachment_paths);
+    if (attachment_count > MAX_ATTACHMENT_COUNT) {
+        g_set_error (
+            error,
+            G_IO_ERROR,
+            G_IO_ERROR_INVALID_ARGUMENT,
+            "At most %u attachments are allowed.",
+            MAX_ATTACHMENT_COUNT);
+        return FALSE;
+    }
+
+    for (guint index = 0; index < attachment_count; index++) {
+        GStatBuf stat_buffer;
+        gchar *basename = g_path_get_basename (attachment_paths[index]);
+
+        if (g_stat (attachment_paths[index], &stat_buffer) != 0 ||
+            !S_ISREG (stat_buffer.st_mode) ||
+            g_access (attachment_paths[index], R_OK) != 0) {
+            g_set_error (
+                error,
+                G_IO_ERROR,
+                G_IO_ERROR_INVALID_ARGUMENT,
+                "Attachment '%s' is not a readable regular file.",
+                basename);
+            g_free (basename);
+            return FALSE;
+        }
+
+        if (stat_buffer.st_size < 0 ||
+            (guint64) stat_buffer.st_size > MAX_ATTACHMENT_TOTAL_BYTES - total_bytes) {
+            g_set_error_literal (
+                error,
+                G_IO_ERROR,
+                G_IO_ERROR_INVALID_ARGUMENT,
+                "Attachments exceed the 20 MiB total size limit.");
+            g_free (basename);
+            return FALSE;
+        }
+
+        total_bytes += (guint64) stat_buffer.st_size;
+        g_free (basename);
+    }
+
+    multipart = camel_multipart_new ();
+    camel_data_wrapper_set_mime_type (CAMEL_DATA_WRAPPER (multipart), "multipart/mixed");
+    camel_multipart_set_boundary (multipart, NULL);
+
+    part = camel_mime_part_new ();
+    camel_mime_part_set_content (part, body, strlen (body), "text/plain; charset=utf-8");
+    camel_multipart_add_part (multipart, part);
+    g_object_unref (part);
+
+    for (guint index = 0; index < attachment_count; index++) {
+        gchar *contents = NULL;
+        gsize contents_length = 0;
+        gchar *basename = g_path_get_basename (attachment_paths[index]);
+        gchar *content_type;
+        gchar *mime_type;
+        gboolean uncertain = FALSE;
+        GError *read_error = NULL;
+
+        if (!g_file_get_contents (
+                attachment_paths[index], &contents, &contents_length, &read_error)) {
+            g_set_error (
+                error,
+                G_IO_ERROR,
+                G_IO_ERROR_FAILED,
+                "Could not read attachment '%s'.",
+                basename);
+            g_clear_error (&read_error);
+            g_free (basename);
+            g_object_unref (multipart);
+            return FALSE;
+        }
+
+        content_type = g_content_type_guess (
+            basename,
+            (const guchar *) contents,
+            MIN (contents_length, (gsize) 512),
+            &uncertain);
+        mime_type = content_type ? g_content_type_get_mime_type (content_type) : NULL;
+        if (!mime_type)
+            mime_type = g_strdup ("application/octet-stream");
+
+        part = camel_mime_part_new ();
+        camel_mime_part_set_content (
+            part, contents, (gint) contents_length, mime_type);
+        camel_mime_part_set_filename (part, basename);
+        camel_mime_part_set_disposition (part, "attachment");
+        camel_mime_part_set_encoding (part, CAMEL_TRANSFER_ENCODING_BASE64);
+        camel_multipart_add_part (multipart, part);
+
+        g_object_unref (part);
+        g_free (mime_type);
+        g_free (content_type);
+        g_free (basename);
+        g_free (contents);
+    }
+
+    camel_medium_set_content (CAMEL_MEDIUM (message), CAMEL_DATA_WRAPPER (multipart));
+    g_object_unref (multipart);
+    return TRUE;
+}
+
 static void
-handle_send_mail (GVariant *parameters, GDBusMethodInvocation *invocation)
+send_mail (const gchar *account_uid,
+           const gchar *to_str,
+           const gchar *subject_str,
+           const gchar *body_str,
+           gchar **attachment_paths,
+           const gchar *in_reply_to,
+           const gchar *references,
+           GDBusMethodInvocation *invocation)
 {
     EShell *shell = e_shell_get_default ();
     EShellBackend *shell_backend;
     EMailBackend *backend;
     EMailSession *session;
     ESourceRegistry *registry;
-    const gchar *account_uid, *to_str, *subject_str, *body_str;
     ESource *source = NULL;
     ESourceMailSubmission *submission = NULL;
     ESourceMailIdentity *identity = NULL;
@@ -590,13 +739,11 @@ handle_send_mail (GVariant *parameters, GDBusMethodInvocation *invocation)
     const gchar *from_address = NULL;
     CamelService *service = NULL;
     CamelTransport *transport = NULL;
-    CamelMimeMessage *msg = NULL;
+    CamelMimeMessage *message = NULL;
     CamelInternetAddress *from_addr = NULL;
     CamelInternetAddress *to_addr = NULL;
     gboolean success = FALSE;
     GError *error = NULL;
-
-    g_print ("McpAutomationBridge: SendMail called\n");
 
     if (!shell) {
         g_dbus_method_invocation_return_value (invocation, g_variant_new ("(bs)", FALSE, "Shell not available"));
@@ -613,7 +760,11 @@ handle_send_mail (GVariant *parameters, GDBusMethodInvocation *invocation)
     session = e_mail_backend_get_session (backend);
     registry = e_shell_get_registry (shell);
 
-    g_variant_get (parameters, "(&s&s&s&s)", &account_uid, &to_str, &subject_str, &body_str);
+    if (!header_value_is_safe (in_reply_to) || !header_value_is_safe (references)) {
+        g_dbus_method_invocation_return_value (
+            invocation, g_variant_new ("(bs)", FALSE, "Reply headers contain invalid characters"));
+        return;
+    }
 
     source = e_source_registry_ref_source (registry, account_uid);
     if (!source) {
@@ -709,20 +860,35 @@ handle_send_mail (GVariant *parameters, GDBusMethodInvocation *invocation)
     transport = CAMEL_TRANSPORT (service);
 
     // 4. Create and populate message
-    msg = camel_mime_message_new ();
-    camel_mime_message_set_subject (msg, subject_str);
+    message = camel_mime_message_new ();
+    camel_mime_message_set_subject (message, subject_str);
 
-    // Create and attach text/plain content body
-    camel_mime_part_set_content (CAMEL_MIME_PART (msg), body_str, strlen (body_str), "text/plain");
+    if (!set_message_content (message, body_str, attachment_paths, &error)) {
+        gchar *message_error = g_strdup_printf (
+            "Failed to build message: %s", error ? error->message : "Unknown error");
+        g_dbus_method_invocation_return_value (
+            invocation, g_variant_new ("(bs)", FALSE, message_error));
+        g_free (message_error);
+        g_clear_error (&error);
+        g_object_unref (message);
+        g_object_unref (service);
+        g_object_unref (source);
+        return;
+    }
+
+    if (in_reply_to && *in_reply_to)
+        camel_medium_set_header (CAMEL_MEDIUM (message), "In-Reply-To", in_reply_to);
+    if (references && *references)
+        camel_medium_set_header (CAMEL_MEDIUM (message), "References", references);
 
     // Setup Addresses (from, to)
     from_addr = camel_internet_address_new ();
     camel_internet_address_add (from_addr, from_name, from_address);
-    camel_mime_message_set_from (msg, from_addr);
+    camel_mime_message_set_from (message, from_addr);
 
     to_addr = camel_internet_address_new ();
     camel_internet_address_add (to_addr, NULL, to_str);
-    camel_mime_message_set_recipients (msg, CAMEL_RECIPIENT_TYPE_TO, to_addr);
+    camel_mime_message_set_recipients (message, CAMEL_RECIPIENT_TYPE_TO, to_addr);
 
     // 5. Connect and send
     if (!camel_service_connect_sync (service, NULL, &error)) {
@@ -732,7 +898,7 @@ handle_send_mail (GVariant *parameters, GDBusMethodInvocation *invocation)
         g_clear_error (&error);
     } else {
         gboolean out_sent_message_saved = FALSE;
-        success = camel_transport_send_to_sync (transport, msg, CAMEL_ADDRESS (from_addr), CAMEL_ADDRESS (to_addr), &out_sent_message_saved, NULL, &error);
+        success = camel_transport_send_to_sync (transport, message, CAMEL_ADDRESS (from_addr), CAMEL_ADDRESS (to_addr), &out_sent_message_saved, NULL, &error);
         if (success) {
             g_dbus_method_invocation_return_value (invocation, g_variant_new ("(bs)", TRUE, "Email sent successfully"));
         } else {
@@ -747,9 +913,62 @@ handle_send_mail (GVariant *parameters, GDBusMethodInvocation *invocation)
     // Clean up
     g_object_unref (from_addr);
     g_object_unref (to_addr);
-    g_object_unref (msg);
+    g_object_unref (message);
     g_object_unref (service);
     g_object_unref (source);
+}
+
+static void
+handle_send_mail (GVariant *parameters, GDBusMethodInvocation *invocation)
+{
+    const gchar *account_uid, *to_str, *subject_str, *body_str;
+
+    g_print ("McpAutomationBridge: SendMail called\n");
+    g_variant_get (
+        parameters,
+        "(&s&s&s&s)",
+        &account_uid,
+        &to_str,
+        &subject_str,
+        &body_str);
+    send_mail (
+        account_uid, to_str, subject_str, body_str, NULL, "", "", invocation);
+}
+
+static void
+handle_send_mail_with_attachments (GVariant *parameters,
+                                   GDBusMethodInvocation *invocation)
+{
+    const gchar *account_uid, *to_str, *subject_str, *body_str;
+    const gchar *in_reply_to, *references;
+    GVariant *attachment_paths_variant;
+    gchar **attachment_paths;
+
+    g_print ("McpAutomationBridge: SendMailWithAttachments called\n");
+    g_variant_get (
+        parameters,
+        "(&s&s&s&s@as&s&s)",
+        &account_uid,
+        &to_str,
+        &subject_str,
+        &body_str,
+        &attachment_paths_variant,
+        &in_reply_to,
+        &references);
+    attachment_paths = g_variant_dup_strv (attachment_paths_variant, NULL);
+
+    send_mail (
+        account_uid,
+        to_str,
+        subject_str,
+        body_str,
+        attachment_paths,
+        in_reply_to,
+        references,
+        invocation);
+
+    g_strfreev (attachment_paths);
+    g_variant_unref (attachment_paths_variant);
 }
 
 static void
@@ -776,6 +995,8 @@ handle_method_call (GDBusConnection *connection,
         handle_save_attachment (parameters, invocation);
     } else if (g_strcmp0 (method_name, "SendMail") == 0) {
         handle_send_mail (parameters, invocation);
+    } else if (g_strcmp0 (method_name, "SendMailWithAttachments") == 0) {
+        handle_send_mail_with_attachments (parameters, invocation);
     }
 }
 

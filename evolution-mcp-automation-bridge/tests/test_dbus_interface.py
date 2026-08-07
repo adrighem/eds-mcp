@@ -21,6 +21,21 @@ class TestMcpAutomationBridge(unittest.TestCase):
         owner = self.proxy.get_name_owner()
         self.assertIsNotNone(owner, "Evolution is not running or the plugin is not loaded.")
 
+    def test_attachment_send_method_is_exposed(self):
+        result = self.bus.call_sync(
+            'org.gnome.Evolution',
+            '/org/gnome/evolution/McpAutomationBridge',
+            'org.freedesktop.DBus.Introspectable',
+            'Introspect',
+            None,
+            GLib.VariantType('(s)'),
+            Gio.DBusCallFlags.NONE,
+            -1,
+            None
+        )
+        introspection_xml, = result.unpack()
+        self.assertIn('SendMailWithAttachments', introspection_xml)
+
     def test_invalid_account_returns_error(self):
         # We test that the bridge responds correctly to an invalid account
         try:

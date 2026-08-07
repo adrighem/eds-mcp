@@ -112,3 +112,159 @@ async def test_send_mail_success(mocker):
         '(ssss)',
         ("acc1", "to@example.test", "Subject", "Body"),
     )
+
+
+@pytest.mark.asyncio
+async def test_send_mail_empty_attachment_list_uses_legacy_method(mocker):
+    from eds_mcp.mail import send_mail_logic
+
+    bridge_call = mocker.patch(
+        "eds_mcp.mail.call_bridge_method",
+        return_value=(True, "queued"),
+    )
+
+    await send_mail_logic(
+        "acc1", "to@example.test", "Subject", "Body", attachment_paths=[]
+    )
+
+    bridge_call.assert_called_once_with(
+        "SendMail",
+        '(ssss)',
+        ("acc1", "to@example.test", "Subject", "Body"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_send_mail_with_attachment(mocker, tmp_path):
+    from eds_mcp.mail import send_mail_logic
+
+    attachment = tmp_path / "report.xlsx"
+    attachment.write_bytes(b"workbook")
+    bridge_call = mocker.patch(
+        "eds_mcp.mail.call_bridge_method",
+        return_value=(True, "queued"),
+    )
+
+    result = await send_mail_logic(
+        "acc1",
+        "to@example.test",
+        "Subject",
+        "Body",
+        attachment_paths=[str(attachment)],
+    )
+
+    assert result == "Successfully sent mail: queued"
+    bridge_call.assert_called_once_with(
+        "SendMailWithAttachments",
+        '(ssssasss)',
+        (
+            "acc1",
+            "to@example.test",
+            "Subject",
+            "Body",
+            [str(attachment.resolve())],
+            "",
+            "",
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_send_mail_rejects_missing_attachment_without_leaking_path(mocker, tmp_path):
+    from eds_mcp.mail import send_mail_logic
+
+    bridge_call = mocker.patch("eds_mcp.mail.call_bridge_method")
+    missing = tmp_path / "missing.xlsx"
+
+    result = await send_mail_logic(
+        "acc1",
+        "to@example.test",
+        "Subject",
+        "Body",
+        attachment_paths=[str(missing)],
+    )
+
+    assert "missing.xlsx" in result
+    assert str(tmp_path) not in result
+    bridge_call.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_send_mail_rejects_too_many_attachments(mocker):
+    from eds_mcp.mail import send_mail_logic
+
+    bridge_call = mocker.patch("eds_mcp.mail.call_bridge_method")
+
+    result = await send_mail_logic(
+        "acc1",
+        "to@example.test",
+        "Subject",
+        "Body",
+        attachment_paths=[f"attachment-{index}" for index in range(11)],
+    )
+
+    assert result == "Error: At most 10 attachments are allowed."
+    bridge_call.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_send_mail_rejects_oversized_attachment(mocker, tmp_path):
+    from eds_mcp.mail import MAX_ATTACHMENT_TOTAL_BYTES, send_mail_logic
+
+    bridge_call = mocker.patch("eds_mcp.mail.call_bridge_method")
+    attachment = tmp_path / "large.bin"
+    with attachment.open("wb") as file_handle:
+        file_handle.truncate(MAX_ATTACHMENT_TOTAL_BYTES + 1)
+
+    result = await send_mail_logic(
+        "acc1",
+        "to@example.test",
+        "Subject",
+        "Body",
+        attachment_paths=[str(attachment)],
+    )
+
+    assert result == "Error: Attachments exceed the 20 MiB total size limit."
+    bridge_call.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_send_mail_as_threaded_reply(mocker):
+    from eds_mcp.mail import send_mail_logic
+
+    mocker.patch(
+        "eds_mcp.mail.read_cached_message",
+        return_value=(
+            "Message-ID: <message@example.test>\r\n"
+            "References: <root@example.test>\r\n"
+            "\r\nBody"
+        ),
+    )
+    bridge_call = mocker.patch(
+        "eds_mcp.mail.call_bridge_method",
+        return_value=(True, "queued"),
+    )
+
+    result = await send_mail_logic(
+        "acc1",
+        "to@example.test",
+        "Re: Subject",
+        "Reply",
+        reply_to_message_uid="message-uid",
+        reply_to_folder="Inbox",
+    )
+
+    assert result == "Successfully sent mail: queued"
+    bridge_call.assert_called_once_with(
+        "SendMailWithAttachments",
+        '(ssssasss)',
+        (
+            "acc1",
+            "to@example.test",
+            "Re: Subject",
+            "Reply",
+            [],
+            "<message@example.test>",
+            "<root@example.test> <message@example.test>",
+        ),
+    )

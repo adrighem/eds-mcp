@@ -25,6 +25,8 @@ EVOLUTION_OBJECT_PATH = "/org/gnome/evolution/McpAutomationBridge"
 EVOLUTION_INTERFACE_NAME = "org.gnome.Evolution.McpAutomationBridge"
 BRIDGE_READ_FALLBACK_ENV = "EDS_MCP_ENABLE_EVOLUTION_BRIDGE_READS"
 BRIDGE_CALL_TIMEOUT_MS = 10_000
+MAX_ATTACHMENT_COUNT = 10
+MAX_ATTACHMENT_TOTAL_BYTES = 20 * 1024 * 1024
 
 def clean_html(html: str) -> str:
     """Basic HTML to text conversion without external dependencies."""
@@ -512,19 +514,101 @@ async def delete_message_logic(account_uid: str, message_uid: str, folder_name: 
 
     return await asyncio.to_thread(_logic)
 
-async def send_mail_logic(account_uid: str, to: str, subject: str, body: str) -> str:
+def normalize_attachment_paths(attachment_paths: Optional[list[str]]) -> list[str]:
+    """Validate local attachment paths without exposing full paths in errors."""
+    if not attachment_paths:
+        return []
+    if len(attachment_paths) > MAX_ATTACHMENT_COUNT:
+        raise ValueError(f"At most {MAX_ATTACHMENT_COUNT} attachments are allowed.")
+
+    normalized_paths = []
+    total_bytes = 0
+    for attachment_path in attachment_paths:
+        normalized_path = os.path.realpath(os.path.abspath(os.path.expanduser(attachment_path)))
+        basename = os.path.basename(normalized_path) or "attachment"
+        try:
+            stat_result = os.stat(normalized_path)
+        except OSError:
+            raise ValueError(f"Attachment '{basename}' is not a readable regular file.") from None
+        if not os.path.isfile(normalized_path) or not os.access(normalized_path, os.R_OK):
+            raise ValueError(f"Attachment '{basename}' is not a readable regular file.")
+
+        total_bytes += stat_result.st_size
+        if total_bytes > MAX_ATTACHMENT_TOTAL_BYTES:
+            raise ValueError("Attachments exceed the 20 MiB total size limit.")
+        normalized_paths.append(normalized_path)
+
+    return normalized_paths
+
+
+def extract_reply_headers(raw_content: str) -> tuple[str, str]:
+    """Return sanitized In-Reply-To and References values from an RFC822 message."""
+    message = message_from_string(raw_content)
+
+    def _sanitize(value: Optional[str]) -> str:
+        return re.sub(r"[\r\n]+", " ", value or "").strip()
+
+    message_id = _sanitize(message.get("Message-ID"))
+    references = _sanitize(message.get("References"))
+    if message_id and message_id not in references.split():
+        references = f"{references} {message_id}".strip()
+    return message_id, references
+
+
+async def send_mail_logic(
+    account_uid: str,
+    to: str,
+    subject: str,
+    body: str,
+    attachment_paths: Optional[list[str]] = None,
+    reply_to_message_uid: Optional[str] = None,
+    reply_to_folder: str = "Inbox",
+) -> str:
     """Sends an email using the D-Bus interface."""
     def _logic():
         try:
-            success, message = call_bridge_method(
-                "SendMail",
-                '(ssss)',
-                (account_uid, to, subject, body),
-            )
+            normalized_paths = normalize_attachment_paths(attachment_paths)
+            in_reply_to = ""
+            references = ""
+
+            if reply_to_message_uid:
+                raw_content = read_cached_message(account_uid, reply_to_message_uid, reply_to_folder)
+                if raw_content is None:
+                    success, raw_content = call_bridge_method(
+                        "GetMessage",
+                        '(sss)',
+                        (account_uid, reply_to_message_uid, reply_to_folder),
+                    )
+                    if not success:
+                        return "Failed to send mail: reply source message could not be read."
+                in_reply_to, references = extract_reply_headers(raw_content)
+
+            if normalized_paths or reply_to_message_uid:
+                success, message = call_bridge_method(
+                    "SendMailWithAttachments",
+                    '(ssssasss)',
+                    (
+                        account_uid,
+                        to,
+                        subject,
+                        body,
+                        normalized_paths,
+                        in_reply_to,
+                        references,
+                    ),
+                )
+            else:
+                success, message = call_bridge_method(
+                    "SendMail",
+                    '(ssss)',
+                    (account_uid, to, subject, body),
+                )
             return f"{'Successfully sent' if success else 'Failed to send'} mail: {message}"
+        except ValueError as e:
+            return f"Error: {e}"
         except Exception as e:
             logger.error(f"D-Bus send failed: {e}")
-            return f"Error: {e}. Ensure the MCP automation bridge plugin supports 'SendMail'."
+            return f"Error: {e}. Ensure the Evolution MCP automation bridge is current."
 
     return await asyncio.to_thread(_logic)
 

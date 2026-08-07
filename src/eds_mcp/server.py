@@ -225,9 +225,25 @@ if check_gi_dependencies():
         return await search_emails_logic(account_uid, query, folder_name, limit)
 
     @mcp.tool()
-    async def send_email(account_uid: str, to: str, subject: str, body: str) -> str:
-        """Sends a new email via Evolution."""
-        return await send_mail_logic(account_uid, to, subject, body)
+    async def send_email(
+        account_uid: str,
+        to: str,
+        subject: str,
+        body: str,
+        attachment_paths: Optional[list[str]] = None,
+        reply_to_message_uid: Optional[str] = None,
+        reply_to_folder: str = "Inbox",
+    ) -> str:
+        """Sends an email, optionally with local attachments or as a threaded reply."""
+        return await send_mail_logic(
+            account_uid,
+            to,
+            subject,
+            body,
+            attachment_paths,
+            reply_to_message_uid,
+            reply_to_folder,
+        )
 
     @mcp.tool()
     async def mark_email_as_read(account_uid: str, message_uid: str, folder_name: str, read: bool = True) -> str:

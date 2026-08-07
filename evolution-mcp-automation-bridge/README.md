@@ -6,6 +6,8 @@ This is an Evolution EPlugin that exposes a D-Bus interface for programmatic con
 
 - **MoveMessage**: Move emails between folders within an account.
 - **DeleteMessage**: Securely mark messages for deletion and synchronize the folder.
+- **SendMail**: Send plain-text messages.
+- **SendMailWithAttachments**: Send plain-text messages with local attachments and optional reply-thread headers.
 - **D-Bus Interface**: Exposed at `org.gnome.Evolution.McpAutomationBridge`.
 
 ## Installation
