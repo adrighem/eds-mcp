@@ -18,3 +18,8 @@
 - Resolved the `env.py` conflict by keeping both the D-Bus session-bus fallback and the PyGObject deprecation-warning suppression.
 - Resolved the bridge conflict by keeping the upstream `MarkAsRead` method and the transport-UID based `SendMail` path, while removing the duplicate `SendMail` XML declaration.
 - Refreshed `uv.lock` with a full `uv lock --upgrade` after resolving generated lockfile conflicts.
+
+## 2026-08-14 dependency maintenance
+
+- Refreshed `pypdf` dependency via local `uv lock --upgrade-package pypdf` rather than merging Dependabot branch `PR:15` directly.
+- Validated new version 6.16.1 against core document parser tests to confirm no regressions in PDF extraction logic.

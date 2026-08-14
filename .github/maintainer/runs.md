@@ -1,5 +1,12 @@
 # Maintainer Runs
 
+## 2026-08-14
+
+- Scope: open issue/PR triage for `adrighem/eds-mcp`.
+- Findings: no open non-PR issues; open PR `PR:15` is a Dependabot update targeting `pypdf` from 6.14.2 to 6.15.0.
+- Action: refreshed `pypdf` locally with `uv lock --upgrade-package pypdf`; resolver selected `pypdf` 6.16.1, which is newer than the PR target 6.15.0 and includes both robust security fixes and critical bug resolutions.
+- Verification: `make lock-check` passed; `uv run pytest tests/test_documents.py` passed.
+
 ## 2026-06-24
 
 - Scope: open issue/PR/security triage for `adrighem/eds-mcp`.
