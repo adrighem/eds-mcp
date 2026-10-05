@@ -88,6 +88,8 @@ static const gchar xml[] =
     "      <arg type='as' name='attachment_paths' direction='in'/>\n"
     "      <arg type='s' name='in_reply_to' direction='in'/>\n"
     "      <arg type='s' name='references' direction='in'/>\n"
+    "      <arg type='s' name='cc' direction='in'/>\n"
+    "      <arg type='s' name='bcc' direction='in'/>\n"
     "      <arg type='b' name='success' direction='out'/>\n"
     "      <arg type='s' name='message' direction='out'/>\n"
     "    </method>\n"
@@ -717,6 +719,33 @@ set_message_content (CamelMimeMessage *message,
 }
 
 static void
+add_recipients_from_string (CamelInternetAddress *addr_obj, const gchar *input_str)
+{
+    gchar *normalized;
+
+    if (!addr_obj || !input_str || !*input_str)
+        return;
+
+    normalized = g_strdup (input_str);
+    for (gchar *p = normalized; *p; p++) {
+        if (*p == ';')
+            *p = ',';
+    }
+
+    if (camel_address_decode (CAMEL_ADDRESS (addr_obj), normalized) < 0) {
+        gchar **tokens = g_strsplit_set (normalized, ",;", -1);
+        for (gint i = 0; tokens && tokens[i]; i++) {
+            gchar *trimmed = g_strstrip (tokens[i]);
+            if (*trimmed) {
+                camel_internet_address_add (addr_obj, NULL, trimmed);
+            }
+        }
+        g_strfreev (tokens);
+    }
+    g_free (normalized);
+}
+
+static void
 send_mail (const gchar *account_uid,
            const gchar *to_str,
            const gchar *subject_str,
@@ -724,6 +753,8 @@ send_mail (const gchar *account_uid,
            gchar **attachment_paths,
            const gchar *in_reply_to,
            const gchar *references,
+           const gchar *cc_str,
+           const gchar *bcc_str,
            GDBusMethodInvocation *invocation)
 {
     EShell *shell = e_shell_get_default ();
@@ -742,6 +773,9 @@ send_mail (const gchar *account_uid,
     CamelMimeMessage *message = NULL;
     CamelInternetAddress *from_addr = NULL;
     CamelInternetAddress *to_addr = NULL;
+    CamelInternetAddress *cc_addr = NULL;
+    CamelInternetAddress *bcc_addr = NULL;
+    CamelInternetAddress *all_recipients = NULL;
     gboolean success = FALSE;
     GError *error = NULL;
 
@@ -881,14 +915,34 @@ send_mail (const gchar *account_uid,
     if (references && *references)
         camel_medium_set_header (CAMEL_MEDIUM (message), "References", references);
 
-    // Setup Addresses (from, to)
+    // Setup Addresses (from, to, cc, bcc)
     from_addr = camel_internet_address_new ();
     camel_internet_address_add (from_addr, from_name, from_address);
     camel_mime_message_set_from (message, from_addr);
 
     to_addr = camel_internet_address_new ();
-    camel_internet_address_add (to_addr, NULL, to_str);
+    add_recipients_from_string (to_addr, to_str);
     camel_mime_message_set_recipients (message, CAMEL_RECIPIENT_TYPE_TO, to_addr);
+
+    if (cc_str && *cc_str) {
+        cc_addr = camel_internet_address_new ();
+        add_recipients_from_string (cc_addr, cc_str);
+        camel_mime_message_set_recipients (message, CAMEL_RECIPIENT_TYPE_CC, cc_addr);
+    }
+
+    if (bcc_str && *bcc_str) {
+        bcc_addr = camel_internet_address_new ();
+        add_recipients_from_string (bcc_addr, bcc_str);
+        camel_mime_message_set_recipients (message, CAMEL_RECIPIENT_TYPE_BCC, bcc_addr);
+    }
+
+    all_recipients = camel_internet_address_new ();
+    if (to_addr)
+        camel_address_cat (CAMEL_ADDRESS (all_recipients), CAMEL_ADDRESS (to_addr));
+    if (cc_addr)
+        camel_address_cat (CAMEL_ADDRESS (all_recipients), CAMEL_ADDRESS (cc_addr));
+    if (bcc_addr)
+        camel_address_cat (CAMEL_ADDRESS (all_recipients), CAMEL_ADDRESS (bcc_addr));
 
     // 5. Connect and send
     if (!camel_service_connect_sync (service, NULL, &error)) {
@@ -898,7 +952,7 @@ send_mail (const gchar *account_uid,
         g_clear_error (&error);
     } else {
         gboolean out_sent_message_saved = FALSE;
-        success = camel_transport_send_to_sync (transport, message, CAMEL_ADDRESS (from_addr), CAMEL_ADDRESS (to_addr), &out_sent_message_saved, NULL, &error);
+        success = camel_transport_send_to_sync (transport, message, CAMEL_ADDRESS (from_addr), CAMEL_ADDRESS (all_recipients), &out_sent_message_saved, NULL, &error);
         if (success) {
             g_dbus_method_invocation_return_value (invocation, g_variant_new ("(bs)", TRUE, "Email sent successfully"));
         } else {
@@ -911,8 +965,11 @@ send_mail (const gchar *account_uid,
     }
 
     // Clean up
-    g_object_unref (from_addr);
-    g_object_unref (to_addr);
+    if (from_addr) g_object_unref (from_addr);
+    if (to_addr) g_object_unref (to_addr);
+    if (cc_addr) g_object_unref (cc_addr);
+    if (bcc_addr) g_object_unref (bcc_addr);
+    if (all_recipients) g_object_unref (all_recipients);
     g_object_unref (message);
     g_object_unref (service);
     g_object_unref (source);
@@ -932,29 +989,46 @@ handle_send_mail (GVariant *parameters, GDBusMethodInvocation *invocation)
         &subject_str,
         &body_str);
     send_mail (
-        account_uid, to_str, subject_str, body_str, NULL, "", "", invocation);
+        account_uid, to_str, subject_str, body_str, NULL, "", "", "", "", invocation);
 }
 
 static void
 handle_send_mail_with_attachments (GVariant *parameters,
                                    GDBusMethodInvocation *invocation)
 {
-    const gchar *account_uid, *to_str, *subject_str, *body_str;
-    const gchar *in_reply_to, *references;
-    GVariant *attachment_paths_variant;
-    gchar **attachment_paths;
+    const gchar *account_uid = NULL, *to_str = NULL, *subject_str = NULL, *body_str = NULL;
+    const gchar *in_reply_to = "", *references = "", *cc_str = "", *bcc_str = "";
+    GVariant *attachment_paths_variant = NULL;
+    gchar **attachment_paths = NULL;
+    gsize n_children;
 
     g_print ("McpAutomationBridge: SendMailWithAttachments called\n");
-    g_variant_get (
-        parameters,
-        "(&s&s&s&s@as&s&s)",
-        &account_uid,
-        &to_str,
-        &subject_str,
-        &body_str,
-        &attachment_paths_variant,
-        &in_reply_to,
-        &references);
+    n_children = g_variant_n_children (parameters);
+    if (n_children >= 9) {
+        g_variant_get (
+            parameters,
+            "(&s&s&s&s@as&s&s&s&s)",
+            &account_uid,
+            &to_str,
+            &subject_str,
+            &body_str,
+            &attachment_paths_variant,
+            &in_reply_to,
+            &references,
+            &cc_str,
+            &bcc_str);
+    } else {
+        g_variant_get (
+            parameters,
+            "(&s&s&s&s@as&s&s)",
+            &account_uid,
+            &to_str,
+            &subject_str,
+            &body_str,
+            &attachment_paths_variant,
+            &in_reply_to,
+            &references);
+    }
     attachment_paths = g_variant_dup_strv (attachment_paths_variant, NULL);
 
     send_mail (
@@ -965,6 +1039,8 @@ handle_send_mail_with_attachments (GVariant *parameters,
         attachment_paths,
         in_reply_to,
         references,
+        cc_str,
+        bcc_str,
         invocation);
 
     g_strfreev (attachment_paths);

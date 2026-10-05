@@ -7,7 +7,7 @@ import re
 import glob
 import tempfile
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Union
 from email import message_from_string
 from email.message import Message
 
@@ -555,11 +555,31 @@ def extract_reply_headers(raw_content: str) -> tuple[str, str]:
     return message_id, references
 
 
+def normalize_recipients(recipients: Optional[Union[str, list[str]]]) -> str:
+    """Normalizes string or list of recipient email addresses into clean comma-separated string."""
+    if not recipients:
+        return ""
+    if isinstance(recipients, str):
+        addrs = [addr.strip() for addr in re.split(r'[,;]+', recipients) if addr.strip()]
+        return ", ".join(addrs)
+    if isinstance(recipients, (list, tuple)):
+        addrs = []
+        for item in recipients:
+            if isinstance(item, str):
+                addrs.extend([addr.strip() for addr in re.split(r'[,;]+', item) if addr.strip()])
+            else:
+                raise ValueError(f"Invalid recipient item type: {type(item)}")
+        return ", ".join(addrs)
+    raise ValueError(f"Invalid recipients type: {type(recipients)}")
+
+
 async def send_mail_logic(
     account_uid: str,
-    to: str,
+    to: Union[str, list[str]],
     subject: str,
     body: str,
+    cc: Optional[Union[str, list[str]]] = None,
+    bcc: Optional[Union[str, list[str]]] = None,
     attachment_paths: Optional[list[str]] = None,
     reply_to_message_uid: Optional[str] = None,
     reply_to_folder: str = "Inbox",
@@ -567,6 +587,12 @@ async def send_mail_logic(
     """Sends an email using the D-Bus interface."""
     def _logic():
         try:
+            to_norm = normalize_recipients(to)
+            if not to_norm:
+                return "Error: At least one 'to' recipient is required."
+            cc_norm = normalize_recipients(cc)
+            bcc_norm = normalize_recipients(bcc)
+
             normalized_paths = normalize_attachment_paths(attachment_paths)
             in_reply_to = ""
             references = ""
@@ -583,25 +609,41 @@ async def send_mail_logic(
                         return "Failed to send mail: reply source message could not be read."
                 in_reply_to, references = extract_reply_headers(raw_content)
 
-            if normalized_paths or reply_to_message_uid:
+            if normalized_paths or reply_to_message_uid or cc_norm or bcc_norm:
                 success, message = call_bridge_method(
                     "SendMailWithAttachments",
-                    '(ssssasss)',
+                    '(ssssassssss)',
                     (
                         account_uid,
-                        to,
+                        to_norm,
                         subject,
                         body,
                         normalized_paths,
                         in_reply_to,
                         references,
+                        cc_norm,
+                        bcc_norm,
                     ),
                 )
+                if not success and "signature" in str(message).lower() and not cc_norm and not bcc_norm:
+                    success, message = call_bridge_method(
+                        "SendMailWithAttachments",
+                        '(ssssasss)',
+                        (
+                            account_uid,
+                            to_norm,
+                            subject,
+                            body,
+                            normalized_paths,
+                            in_reply_to,
+                            references,
+                        ),
+                    )
             else:
                 success, message = call_bridge_method(
                     "SendMail",
                     '(ssss)',
-                    (account_uid, to, subject, body),
+                    (account_uid, to_norm, subject, body),
                 )
             return f"{'Successfully sent' if success else 'Failed to send'} mail: {message}"
         except ValueError as e:

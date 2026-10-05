@@ -156,13 +156,15 @@ async def test_send_mail_with_attachment(mocker, tmp_path):
     assert result == "Successfully sent mail: queued"
     bridge_call.assert_called_once_with(
         "SendMailWithAttachments",
-        '(ssssasss)',
+        '(ssssassssss)',
         (
             "acc1",
             "to@example.test",
             "Subject",
             "Body",
             [str(attachment.resolve())],
+            "",
+            "",
             "",
             "",
         ),
@@ -257,7 +259,7 @@ async def test_send_mail_as_threaded_reply(mocker):
     assert result == "Successfully sent mail: queued"
     bridge_call.assert_called_once_with(
         "SendMailWithAttachments",
-        '(ssssasss)',
+        '(ssssassssss)',
         (
             "acc1",
             "to@example.test",
@@ -266,5 +268,77 @@ async def test_send_mail_as_threaded_reply(mocker):
             [],
             "<message@example.test>",
             "<root@example.test> <message@example.test>",
+            "",
+            "",
         ),
     )
+
+
+def test_normalize_recipients():
+    from eds_mcp.mail import normalize_recipients
+
+    assert normalize_recipients(None) == ""
+    assert normalize_recipients("") == ""
+    assert normalize_recipients("user@example.test") == "user@example.test"
+    assert normalize_recipients("u1@example.test, u2@example.test; u3@example.test") == "u1@example.test, u2@example.test, u3@example.test"
+    assert normalize_recipients(["u1@example.test", "u2@example.test; u3@example.test"]) == "u1@example.test, u2@example.test, u3@example.test"
+    assert normalize_recipients(["  u1@example.test  ", "", "u2@example.test"]) == "u1@example.test, u2@example.test"
+
+    with pytest.raises(ValueError):
+        normalize_recipients(123)  # type: ignore
+
+    with pytest.raises(ValueError):
+        normalize_recipients(["valid@example.test", 456])  # type: ignore
+
+
+@pytest.mark.asyncio
+async def test_send_mail_with_cc_bcc_and_multiple_to(mocker):
+    from eds_mcp.mail import send_mail_logic
+
+    bridge_call = mocker.patch(
+        "eds_mcp.mail.call_bridge_method",
+        return_value=(True, "queued"),
+    )
+
+    result = await send_mail_logic(
+        account_uid="acc1",
+        to=["to1@example.test", "to2@example.test; to3@example.test"],
+        subject="Multi test",
+        body="Body",
+        cc="cc1@example.test, cc2@example.test",
+        bcc=["bcc1@example.test"],
+    )
+
+    assert result == "Successfully sent mail: queued"
+    bridge_call.assert_called_once_with(
+        "SendMailWithAttachments",
+        '(ssssassssss)',
+        (
+            "acc1",
+            "to1@example.test, to2@example.test, to3@example.test",
+            "Multi test",
+            "Body",
+            [],
+            "",
+            "",
+            "cc1@example.test, cc2@example.test",
+            "bcc1@example.test",
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_send_mail_validation_errors(mocker):
+    from eds_mcp.mail import send_mail_logic
+
+    bridge_call = mocker.patch("eds_mcp.mail.call_bridge_method")
+
+    res = await send_mail_logic("acc1", "", "Subject", "Body")
+    assert "Error: At least one 'to' recipient is required." in res
+
+    res = await send_mail_logic("acc1", ["   "], "Subject", "Body")
+    assert "Error: At least one 'to' recipient is required." in res
+
+    res = await send_mail_logic("acc1", 123, "Subject", "Body")  # type: ignore
+    assert "Error: Invalid recipients type" in res
+    bridge_call.assert_not_called()

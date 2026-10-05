@@ -1,5 +1,5 @@
 import logging
-from typing import Optional
+from typing import Optional, Union
 from mcp.server.fastmcp import FastMCP
 
 # Initial setup must happen before imports that might trigger GI loading
@@ -227,22 +227,26 @@ if check_gi_dependencies():
     @mcp.tool()
     async def send_email(
         account_uid: str,
-        to: str,
+        to: Union[str, list[str]],
         subject: str,
         body: str,
+        cc: Optional[Union[str, list[str]]] = None,
+        bcc: Optional[Union[str, list[str]]] = None,
         attachment_paths: Optional[list[str]] = None,
         reply_to_message_uid: Optional[str] = None,
         reply_to_folder: str = "Inbox",
     ) -> str:
-        """Sends an email, optionally with local attachments or as a threaded reply."""
+        """Sends an email, optionally with local attachments, multiple recipients (to/cc/bcc), or as a threaded reply."""
         return await send_mail_logic(
             account_uid,
             to,
             subject,
             body,
-            attachment_paths,
-            reply_to_message_uid,
-            reply_to_folder,
+            cc=cc,
+            bcc=bcc,
+            attachment_paths=attachment_paths,
+            reply_to_message_uid=reply_to_message_uid,
+            reply_to_folder=reply_to_folder,
         )
 
     @mcp.tool()
