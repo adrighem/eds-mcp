@@ -721,28 +721,21 @@ set_message_content (CamelMimeMessage *message,
 static void
 add_recipients_from_string (CamelInternetAddress *addr_obj, const gchar *input_str)
 {
-    gchar *normalized;
+    gchar **tokens;
 
     if (!addr_obj || !input_str || !*input_str)
         return;
 
-    normalized = g_strdup (input_str);
-    for (gchar *p = normalized; *p; p++) {
-        if (*p == ';')
-            *p = ',';
-    }
-
-    if (camel_address_decode (CAMEL_ADDRESS (addr_obj), normalized) < 0) {
-        gchar **tokens = g_strsplit_set (normalized, ",;", -1);
-        for (gint i = 0; tokens && tokens[i]; i++) {
-            gchar *trimmed = g_strstrip (tokens[i]);
-            if (*trimmed) {
+    tokens = g_strsplit_set (input_str, ",;", -1);
+    for (gint i = 0; tokens && tokens[i]; i++) {
+        gchar *trimmed = g_strstrip (tokens[i]);
+        if (*trimmed) {
+            if (camel_address_decode (CAMEL_ADDRESS (addr_obj), trimmed) < 0) {
                 camel_internet_address_add (addr_obj, NULL, trimmed);
             }
         }
-        g_strfreev (tokens);
     }
-    g_free (normalized);
+    g_strfreev (tokens);
 }
 
 static void

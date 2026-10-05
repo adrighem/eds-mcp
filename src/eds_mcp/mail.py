@@ -612,7 +612,7 @@ async def send_mail_logic(
             if normalized_paths or reply_to_message_uid or cc_norm or bcc_norm:
                 success, message = call_bridge_method(
                     "SendMailWithAttachments",
-                    '(ssssassssss)',
+                    '(ssssassss)',
                     (
                         account_uid,
                         to_norm,

@@ -156,7 +156,7 @@ async def test_send_mail_with_attachment(mocker, tmp_path):
     assert result == "Successfully sent mail: queued"
     bridge_call.assert_called_once_with(
         "SendMailWithAttachments",
-        '(ssssassssss)',
+        '(ssssassss)',
         (
             "acc1",
             "to@example.test",
@@ -259,7 +259,7 @@ async def test_send_mail_as_threaded_reply(mocker):
     assert result == "Successfully sent mail: queued"
     bridge_call.assert_called_once_with(
         "SendMailWithAttachments",
-        '(ssssassssss)',
+        '(ssssassss)',
         (
             "acc1",
             "to@example.test",
@@ -312,7 +312,7 @@ async def test_send_mail_with_cc_bcc_and_multiple_to(mocker):
     assert result == "Successfully sent mail: queued"
     bridge_call.assert_called_once_with(
         "SendMailWithAttachments",
-        '(ssssassssss)',
+        '(ssssassss)',
         (
             "acc1",
             "to1@example.test, to2@example.test, to3@example.test",
