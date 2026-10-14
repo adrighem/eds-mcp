@@ -36,7 +36,7 @@ if check_gi_dependencies():
     )
     from .contacts import search_contacts_logic
     from .mail import (
-        list_mail_accounts_logic, list_mail_folders_logic, get_emails_logic, 
+        list_mail_accounts_logic, list_mail_folders_logic, get_emails_logic,
         search_emails_logic, move_email_logic, get_email_body_logic,
         send_mail_logic, mark_as_read_logic, delete_message_logic,
         list_attachments_logic, save_attachment_logic
@@ -116,8 +116,8 @@ if check_gi_dependencies():
 
     @mcp.tool()
     async def update_calendar_event(
-        calendar_uid: str, 
-        event_uid: str, 
+        calendar_uid: str,
+        event_uid: str,
         event_rid: Optional[str] = None,
         summary: Optional[str] = None,
         description: Optional[str] = None
@@ -177,7 +177,7 @@ if check_gi_dependencies():
 
     @mcp.tool()
     async def get_emails(account_uid: str, folder_name: str = "Inbox", limit: int = 10, format: str = "json") -> str:
-        """Gets recent emails from a specific folder (defaults to Inbox). 
+        """Gets recent emails from a specific folder (defaults to Inbox).
         Use format='summary' for a human-readable list.
         """
         return await get_emails_logic(account_uid, folder_name, limit, format)
@@ -213,7 +213,7 @@ if check_gi_dependencies():
     @mcp.tool()
     async def read_document(file_path: str) -> str:
         """Extracts text content from a document file (PDF, DOCX, XLSX, TXT, etc.).
-        
+
         This tool should be used AFTER downloading an attachment with 'download_attachment'.
         Provide the full path returned by 'download_attachment'.
         """
@@ -262,7 +262,7 @@ if check_gi_dependencies():
     @mcp.tool()
     async def move_email(account_uid: str, message_uid: str, source_folder: str, dest_folder: str) -> str:
         """Moves an email from one folder to another.
-        
+
         Args:
             account_uid: The UID of the mail account.
             message_uid: The UID of the message to move.

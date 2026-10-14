@@ -39,7 +39,7 @@ async def test_move_email_failure(mock_dbus_proxy, mock_gio):
 
     # Run
     result = await move_email_logic("acc1", "msg1", "Inbox", "NonExistent")
-    
+
     assert "Failed to move email: Folder not found" in result
 
 @pytest.mark.asyncio
@@ -51,7 +51,7 @@ async def test_delete_email_success(mock_dbus_proxy, mock_gio):
 
     # Run
     result = await delete_message_logic("acc1", "msg1", "Inbox")
-    
+
     assert "Successfully delete message: Success" in result
     mock_dbus_proxy.call_sync.assert_called_once()
 
@@ -64,7 +64,7 @@ async def test_delete_email_failure(mock_dbus_proxy, mock_gio):
 
     # Run
     result = await delete_message_logic("acc1", "msg1", "Inbox")
-    
+
     assert "Failed to delete message: Message not found" in result
 
 @pytest.mark.asyncio
@@ -90,7 +90,7 @@ async def test_dbus_exception_handling(mock_dbus_proxy, mock_gio):
 
     # Run
     result = await move_email_logic("acc1", "msg1", "Inbox", "Archive")
-    
+
     assert "Error: Failed to move email via Evolution D-Bus" in result
     assert "D-Bus error" in result
 

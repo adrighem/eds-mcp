@@ -46,7 +46,7 @@ def setup_environment():
         # Arch Linux and others
         f'/usr/lib/python{sys.version_info.major}.{sys.version_info.minor}/site-packages',
     ]
-    
+
     for path in potential_paths:
         if os.path.exists(path) and path not in sys.path:
             sys.path.append(path)
@@ -58,10 +58,10 @@ def setup_environment():
         "/usr/lib/girepository-1.0",
         "/usr/local/lib/girepository-1.0"
     ]
-    
+
     existing_typelib = os.environ.get("GI_TYPELIB_PATH", "")
     new_paths = [p for p in typelib_paths if os.path.exists(p)]
-    
+
     if new_paths:
         os.environ["GI_TYPELIB_PATH"] = os.pathsep.join(new_paths) + (os.pathsep + existing_typelib if existing_typelib else "")
 

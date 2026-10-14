@@ -83,7 +83,7 @@ async def parse_document_logic(file_path: str) -> str:
     path = Path(file_path)
     if not path.exists():
         return f"Error: File not found at {file_path}"
-    
+
     # Check file size (limit parsing to 5MB to avoid context issues)
     size_mb = path.stat().st_size / (1024 * 1024)
     if size_mb > MAX_FILE_SIZE_MB:
@@ -93,6 +93,6 @@ async def parse_document_logic(file_path: str) -> str:
     parser = DOCUMENT_PARSERS.get(ext)
     if not parser:
         return f"Error: Unsupported document format '{ext}'. Supported: {supported_document_formats()}"
-    
+
     content = await asyncio.to_thread(parser, str(path))
     return truncate_for_context(content, MAX_CONTENT_CHARS)
