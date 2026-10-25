@@ -29,3 +29,9 @@
 - Superseded Dependabot `PR:37` with a local commit that also raises the `pyproject.toml` floor, so installs outside `uv.lock` cannot resolve a vulnerable pypdf.
 - `ISSUE:42` suggested `>=6.2.0`; ignored because the advisory's first patched version is 6.21.1. The bot-generated alert issues need verification before their advice is applied.
 - Pushes to GitHub require the noreply commit email `44673609+adrighem@users.noreply.github.com` (email privacy); set as repo-local `user.email`.
+
+## 2026-10-25 security alert backlog closure
+
+- Closed bot-generated security issues #39, #40, #41, and #42 after verifying all pypdf advisories were satisfied by floor `>=6.21.1` and locked `6.21.2` (commit `be7b09d`).
+- Closed bot-generated security issues #47, #48, #49, and #50 after verifying fastmcp/fastmcp-slim 3.4.10, opentelemetry-api 1.45.1, and certifi 2026.10.23 upgrades in `uv.lock` (commit `91ca232`).
+- Kept backlog zeroed and confirmed all GitHub Dependabot/CodeQL alerts cleared.

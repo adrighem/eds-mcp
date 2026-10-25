@@ -48,3 +48,11 @@
 - Findings: `PR:37` (Dependabot, lockfile-only pypdf 6.19.0 -> 6.21.2), bot-generated `ISSUE:38` to `ISSUE:42`, and Dependabot alerts #45 to #49, all for pypdf.
 - Action: bumped floor to `pypdf>=6.21.1` and re-locked (pypdf 6.21.2, no other version changes) in `be7b09d`.
 - Verification: `uv run pytest` passed with 41 tests; CI and CodeQL passed on `main`.
+
+## 2026-10-25 security issue backlog triage
+
+- Scope: `open-source-maintainer` triage of `adrighem/eds-mcp`.
+- Findings: 8 open bot-generated security issues (`ISSUE:39` through `ISSUE:42`, `ISSUE:47` through `ISSUE:50`); 0 open PRs, 0 Dependabot alerts, 0 code scanning alerts.
+- Resolution: verified all 8 issues already fixed on `main` via `be7b09d` (pypdf 6.21.2) and `91ca232` (fastmcp 3.4.10, opentelemetry-api 1.45.1, certifi 2026.10.23).
+- Action: closed issues #39, #40, #41, #42, #47, #48, #49, and #50 with reference commits. Cleaned up inbox.
+- Verification: `gh-helper all` confirmed 0 open issues, 0 PRs, 0 alerts, and clean inbox; test suite 41 passed.
