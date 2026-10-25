@@ -41,3 +41,10 @@
 - Scope: contributor-focused refactor for readability, testability, and onboarding.
 - Action: extracted `summary.py`, refactored `documents.py`, consolidated mail bridge calls, added `CONTRIBUTING.md`, expanded Makefile checks, and fixed `.gitignore` so tests under `tests/` are not ignored.
 - Verification: `make check` passed with 24 tests and 1 existing `PyGIDeprecationWarning`.
+
+## 2026-10-25 pypdf security follow-up
+
+- Scope: `gh-helper` triage of `adrighem/eds-mcp`.
+- Findings: `PR:37` (Dependabot, lockfile-only pypdf 6.19.0 -> 6.21.2), bot-generated `ISSUE:38` to `ISSUE:42`, and Dependabot alerts #45 to #49, all for pypdf.
+- Action: bumped floor to `pypdf>=6.21.1` and re-locked (pypdf 6.21.2, no other version changes) in `be7b09d`.
+- Verification: `uv run pytest` passed with 41 tests; CI and CodeQL passed on `main`.

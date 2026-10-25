@@ -23,3 +23,9 @@
 
 - Refreshed `pypdf` dependency via local `uv lock --upgrade-package pypdf` rather than merging Dependabot branch `PR:15` directly.
 - Validated new version 6.16.1 against core document parser tests to confirm no regressions in PDF extraction logic.
+
+## 2026-10-25 pypdf floor bump
+
+- Superseded Dependabot `PR:37` with a local commit that also raises the `pyproject.toml` floor, so installs outside `uv.lock` cannot resolve a vulnerable pypdf.
+- `ISSUE:42` suggested `>=6.2.0`; ignored because the advisory's first patched version is 6.21.1. The bot-generated alert issues need verification before their advice is applied.
+- Pushes to GitHub require the noreply commit email `44673609+adrighem@users.noreply.github.com` (email privacy); set as repo-local `user.email`.
