@@ -77,4 +77,22 @@ read-state changes require this plugin and a running Evolution process.
 - Object path: `/org/gnome/evolution/McpAutomationBridge`
 - Interface: `org.gnome.Evolution.McpAutomationBridge`
 
+## Version information
+
+Each build embeds the git commit (`git describe --always --dirty`) and the UTC
+build date. CMake re-configures when HEAD, the git index or the plugin source
+changes, so both values stay current. They appear in:
+
+- The plugin description in Evolution's plugin manager.
+- The Evolution log line printed when the plugin loads.
+- The `GetVersion` D-Bus method, returning `(git_commit, build_date)`:
+
+```bash
+gdbus call --session --dest org.gnome.Evolution \
+  --object-path /org/gnome/evolution/McpAutomationBridge \
+  --method org.gnome.Evolution.McpAutomationBridge.GetVersion
+```
+
+`scripts/ping_bridge.py` in the main project prints the same values.
+
 The bridge is a companion to the main [eds-mcp project](https://github.com/adrighem/eds-mcp).

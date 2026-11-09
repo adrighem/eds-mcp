@@ -29,6 +29,13 @@ def ping():
         owner = proxy.get_name_owner()
         if owner:
             print(f"Success: Evolution Automation Bridge found. Owner: {owner}")
+            try:
+                commit, build_date = proxy.call_sync(
+                    "GetVersion", None, Gio.DBusCallFlags.NONE, 5000, None
+                ).unpack()
+                print(f"Bridge version: commit {commit}, built {build_date}")
+            except Exception as e:
+                print(f"Bridge version unavailable (plugin predates GetVersion?): {e}")
             return True
         else:
             print("Error: Evolution is not running or the MCP automation bridge plugin is disabled.")

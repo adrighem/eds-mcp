@@ -7,8 +7,8 @@
     _name="MCP Automation Bridge"
     location="@PLUGINDIR@/libevolution-mcp-automation-bridge@SOEXT@">
 
-    <description>Exposes Evolution functionality via D-Bus for the eds-mcp server.</description>
-    <_description>Exposes Evolution functionality via D-Bus for the eds-mcp server.</_description>
+    <description>Exposes Evolution functionality via D-Bus for the eds-mcp server. Commit @BRIDGE_GIT_COMMIT@, built @BRIDGE_BUILD_DATE@.</description>
+    <_description>Exposes Evolution functionality via D-Bus for the eds-mcp server. Commit @BRIDGE_GIT_COMMIT@, built @BRIDGE_BUILD_DATE@.</_description>
 
     <author name="Vincent" email="vincent@example.com"/>
 

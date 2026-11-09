@@ -20,12 +20,23 @@ static GDBusNodeInfo *introspection_data = NULL;
 static guint registration_id = 0;
 static GDBusConnection *global_conn = NULL;
 
+#ifndef BRIDGE_GIT_COMMIT
+#define BRIDGE_GIT_COMMIT "unknown"
+#endif
+#ifndef BRIDGE_BUILD_DATE
+#define BRIDGE_BUILD_DATE __DATE__ " " __TIME__
+#endif
+
 #define MAX_ATTACHMENT_COUNT 10
 #define MAX_ATTACHMENT_TOTAL_BYTES (20 * 1024 * 1024)
 
 static const gchar xml[] = 
     "<node>"
     "  <interface name='org.gnome.Evolution.McpAutomationBridge'>"
+    "    <method name='GetVersion'>"
+    "      <arg type='s' name='git_commit' direction='out'/>"
+    "      <arg type='s' name='build_date' direction='out'/>"
+    "    </method>"
     "    <method name='MoveMessage'>"
     "      <arg type='s' name='account_uid' direction='in'/>"
     "      <arg type='s' name='message_uid' direction='in'/>"
@@ -1050,7 +1061,9 @@ handle_method_call (GDBusConnection *connection,
                     GDBusMethodInvocation *invocation,
                     gpointer user_data)
 {
-    if (g_strcmp0 (method_name, "MoveMessage") == 0) {
+    if (g_strcmp0 (method_name, "GetVersion") == 0) {
+        g_dbus_method_invocation_return_value (invocation, g_variant_new ("(ss)", BRIDGE_GIT_COMMIT, BRIDGE_BUILD_DATE));
+    } else if (g_strcmp0 (method_name, "MoveMessage") == 0) {
         handle_move_message (parameters, invocation);
     } else if (g_strcmp0 (method_name, "DeleteMessage") == 0) {
         handle_delete_message (parameters, invocation);
@@ -1082,7 +1095,8 @@ e_plugin_ui_init (gpointer ui_manager, gpointer user_data)
     if (g_strcmp0 (prgname, "org.gnome.Evolution") != 0 && g_strcmp0 (prgname, "evolution") != 0)
         return TRUE;
 
-    g_print ("CUSTOM INSTRUMENTATION PLUGIN LOADING in %s (PID %d)\n", prgname, (int)getpid());
+    g_print ("CUSTOM INSTRUMENTATION PLUGIN LOADING in %s (PID %d), commit %s, built %s\n",
+             prgname, (int)getpid(), BRIDGE_GIT_COMMIT, BRIDGE_BUILD_DATE);
 
     if (registration_id > 0)
         return TRUE;

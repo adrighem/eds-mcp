@@ -15,6 +15,37 @@ pkg_check_modules(EBOOK      REQUIRED libebook-1.2)
 pkg_check_modules(ECAL       REQUIRED libecal-2.0)
 pkg_check_modules(GLIB       REQUIRED glib-2.0 gobject-2.0 gmodule-2.0 gio-2.0 json-glib-1.0)
 
+# Build identification: git commit and build date (UTC).
+# Re-configure when HEAD, the index or the plugin source changes so both stay current.
+execute_process(
+  COMMAND git describe --always --dirty --abbrev=12
+  WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+  OUTPUT_VARIABLE BRIDGE_GIT_COMMIT
+  OUTPUT_STRIP_TRAILING_WHITESPACE
+  ERROR_QUIET
+)
+execute_process(
+  COMMAND git rev-parse --absolute-git-dir
+  WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+  OUTPUT_VARIABLE BRIDGE_GIT_DIR
+  OUTPUT_STRIP_TRAILING_WHITESPACE
+  ERROR_QUIET
+)
+if(NOT BRIDGE_GIT_COMMIT)
+  set(BRIDGE_GIT_COMMIT "unknown")
+endif()
+string(TIMESTAMP BRIDGE_BUILD_DATE "%Y-%m-%dT%H:%M:%SZ" UTC)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+  ${CMAKE_CURRENT_SOURCE_DIR}/evolution-mail-process.c
+)
+if(BRIDGE_GIT_DIR)
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    ${BRIDGE_GIT_DIR}/HEAD
+    ${BRIDGE_GIT_DIR}/index
+  )
+endif()
+message(STATUS "MCP Automation Bridge: commit ${BRIDGE_GIT_COMMIT}, built ${BRIDGE_BUILD_DATE}")
+
 add_library(evolution-mcp-automation-bridge SHARED
   evolution-mail-process.c
 )
@@ -28,6 +59,11 @@ target_include_directories(evolution-mcp-automation-bridge PRIVATE
   ${EBOOK_INCLUDE_DIRS}
   ${ECAL_INCLUDE_DIRS}
   ${GLIB_INCLUDE_DIRS}
+)
+
+target_compile_definitions(evolution-mcp-automation-bridge PRIVATE
+  BRIDGE_GIT_COMMIT="${BRIDGE_GIT_COMMIT}"
+  BRIDGE_BUILD_DATE="${BRIDGE_BUILD_DATE}"
 )
 
 target_link_directories(evolution-mcp-automation-bridge PRIVATE
