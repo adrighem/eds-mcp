@@ -56,3 +56,10 @@
 - Resolution: verified all 8 issues already fixed on `main` via `be7b09d` (pypdf 6.21.2) and `91ca232` (fastmcp 3.4.10, opentelemetry-api 1.45.1, certifi 2026.10.23).
 - Action: closed issues #39, #40, #41, #42, #47, #48, #49, and #50 with reference commits. Cleaned up inbox.
 - Verification: `gh-helper all` confirmed 0 open issues, 0 PRs, 0 alerts, and clean inbox; test suite 41 passed.
+
+## 2026-11-09 security alert remediation
+
+- Scope: `open-source-maintainer` pass on `adrighem/eds-mcp`.
+- Findings: 9 open Dependabot alerts (54-62: 8 authlib, 1 dnspython; 1 critical), 9 matching bot-generated issues (`ISSUE:52` through `ISSUE:59`, `ISSUE:61`), Dependabot `PR:51` (authlib 1.9.1) and `PR:60` (dnspython 2.9.0).
+- PR review: lockfile-only diffs, hashes from pythonhosted, CI pass; both also dropped the `sys_platform != 'win32'` marker on `cryptography` and `jeepney` (unrelated churn). Not merged per standing rules.
+- Resolution: `d453b07` via `uv lock --upgrade-package authlib --upgrade-package dnspython` (authlib 1.9.5, dnspython 2.9.2, no marker churn). Test suite 41 passed; CI pass. Commit `fixes` refs closed the 9 issues.
