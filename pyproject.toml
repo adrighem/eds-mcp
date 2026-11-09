@@ -7,7 +7,7 @@ requires-python = ">=3.12"
 dependencies = [
     "mcp",
     "fastmcp",
-    "pypdf>=6.21.1",
+    "pypdf>=6.21.4",
     "python-docx",
     "openpyxl",
 ]

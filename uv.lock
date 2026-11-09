@@ -296,7 +296,7 @@ requires-dist = [
     { name = "fastmcp" },
     { name = "mcp" },
     { name = "openpyxl" },
-    { name = "pypdf", specifier = ">=6.21.1" },
+    { name = "pypdf", specifier = ">=6.21.4" },
     { name = "python-docx" },
 ]
 
