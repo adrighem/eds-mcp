@@ -17,7 +17,7 @@
 
 ## Infrastructure & Tooling
 - **uv**: Modern Python package and environment manager.
-- **meson / ninja**: Build system for the C-based automation bridge.
+- **CMake**: Build system for the C-based automation bridge.
 - **Makefile**: Orchestrates the installation of the C plugin and environment setup.
 - **hatchling**: Build backend for the Python package.
 
