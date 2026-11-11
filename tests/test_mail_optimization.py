@@ -1,4 +1,4 @@
-from eds_mcp.mail import extract_text_from_message, clean_html
+from eds_mcp.mail_cache import clean_html, extract_text_from_message
 
 
 def test_clean_html():

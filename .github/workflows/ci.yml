@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   test:
-    name: Unit tests (Python 3.12)
+    name: Lint, typecheck & unit tests (Python 3.12)
     runs-on: ubuntu-24.04
     timeout-minutes: 15
 
@@ -31,8 +31,12 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends \
+            gir1.2-camel-1.2 \
             gir1.2-ebook-1.2 \
+            gir1.2-ebookcontacts-1.2 \
             gir1.2-ecal-2.0 \
+            gir1.2-edataserver-1.2 \
+            gir1.2-ical-3.0 \
             gir1.2-secret-1 \
             python3-gi
 
@@ -48,6 +52,15 @@ jobs:
 
       - name: Install project
         run: uv sync --python /usr/bin/python3 --no-python-downloads --locked --all-groups
+
+      - name: Run Ruff lint
+        run: uv run --no-sync ruff check src tests
+
+      - name: Run Ruff format check
+        run: uv run --no-sync ruff format --check src tests
+
+      - name: Run Mypy typecheck
+        run: uv run --no-sync mypy src tests
 
       - name: Run unit tests
         run: uv run --no-sync pytest tests

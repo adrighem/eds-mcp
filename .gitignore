@@ -26,9 +26,13 @@ wheels/
 venv/
 ENV/
 
+# Caches & Linters
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
 # Environment variables
 .env
-.venv
 env.local
 .env.*.local
 
@@ -43,6 +47,7 @@ env.local
 *.sqlite
 logs/
 *.log
+*.out
 
 # OS
 .DS_Store
@@ -53,10 +58,7 @@ Thumbs.db
 /debug_*.py
 
 # Local install/debug runners and captured output
-/run_install.py
-/run_install.sh
-/final_install.py
-/final_install.sh
-/install_out*.txt
-/*install_out*.out
-/uv_install_out.out
+/run_install*
+/final_install*
+/install_out*
+/*install_out*

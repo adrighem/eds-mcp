@@ -8,7 +8,8 @@ on Linux.
 
 `eds-mcp` uses Evolution Data Server instead of asking for separate provider
 credentials. It works with accounts supported by Evolution, including Microsoft
-365 and Exchange accounts configured through Evolution EWS.
+365 and Exchange accounts configured through Evolution EWS (supporting both raw
+IMAP UIDs and SHA-256 hashed `CamelDataCache` filenames).
 
 > [!IMPORTANT]
 > The server reads personal data from your local Evolution profile and returns
@@ -17,15 +18,20 @@ credentials. It works with accounts supported by Evolution, including Microsoft
 
 ## What can it do?
 
-- **Calendars:** Browse calendars, find recurring events, view a day or date
-  range, create or edit events, delete events, and check EWS free/busy
+- **Calendars:** Browse calendars, find recurring events with compact attendee
+  summaries, view a day or date range, create or edit events using structured
+  fields or raw iCalendar `VEVENT` data, delete events, and check EWS free/busy
   information.
-- **Tasks and memos:** Discover enabled lists, search items, and build a focused
-  view for today.
-- **Contacts:** Find people by name or email across enabled Evolution address
-  books.
-- **Mail:** Browse accounts and folders, list or search messages, read cached
-  bodies, work with attachments, and optionally send or manage mail.
+- **Tasks and memos:** Discover enabled lists, filter incomplete tasks by
+  default, paginate items, and build a focused view for today.
+- **Contacts:** Search people by name or email across enabled Evolution address
+  books with bounded pagination.
+- **Mail:** Browse accounts and case-insensitive canonical folders, reconstruct
+  chronological cross-folder threads with automatic reply-quote stripping
+  (`get_email_thread`), search with Unicode case-folding plus sender/recipient,
+  date, unread, and bounded body filters (`search_emails`), read bodies and
+  attachments, save drafts (`create_draft`), open interactive Evolution composer
+  windows (`open_composer`), and send or manage mail.
 - **Daily overview:** Combine today's events, tasks, and recent inbox messages
   into one summary.
 - **Documents:** Extract text from downloaded PDF, DOCX, XLSX, TXT, Markdown,
@@ -34,8 +40,8 @@ credentials. It works with accounts supported by Evolution, including Microsoft
 Once connected, try prompts such as:
 
 - "What is on my calendar today?"
-- "Show my open tasks and important recent email."
-- "Find Ada's email address."
+- "Summarize the full email thread with Ada across Inbox and Sent Items."
+- "Create a draft reply to that thread or open it in Evolution for review."
 - "Download the invoice attachment and summarize it."
 - "When is my colleague free this week?"
 
@@ -48,9 +54,6 @@ You need:
 - Evolution and Evolution Data Server
 - PyGObject bindings for your distribution's Python
 - [`uv`](https://docs.astral.sh/uv/getting-started/installation/)
-
-The documented installation path targets Debian and Ubuntu. Other Linux
-distributions can work with equivalent Evolution, EDS, and GI packages.
 
 On Debian or Ubuntu, start with:
 
@@ -74,8 +77,7 @@ uv venv --python /usr/bin/python3 --system-site-packages
 uv sync --locked --no-dev
 ```
 
-Add the installed executable to your MCP client's server configuration. The
-configuration file location varies by client, but the common JSON shape is:
+Add the installed executable to your MCP client's server configuration:
 
 ```json
 {
@@ -87,41 +89,26 @@ configuration file location varies by client, but the common JSON shape is:
 }
 ```
 
-Replace the example with the real absolute path, restart your MCP client, and
-ask it what is on your calendar today.
-
-To check startup manually:
-
-```bash
-.venv/bin/eds-mcp
-```
-
-The server waits for MCP messages on standard input, so silence is normal. Any
-startup error appears on standard error. Press `Ctrl+C` to stop it.
-
 ## Optional mail automation bridge
 
-Calendar changes use EDS directly. Basic mail listing and search also work
-without the bridge by reading Evolution's local index and message cache.
+Calendar changes use EDS directly. Mail listing, search, thread reconstruction,
+and cached body/attachment reads work without the bridge by reading Evolution's
+local read-only SQLite index and `CamelDataCache`.
 
 Install the bridge when you want to:
 
-- send email or threaded replies
-- attach local files to outgoing email
-- move or delete messages
-- mark messages read or unread
-- retrieve uncached message content through Evolution's process
+- send email or threaded replies (with automatic SMTP `Sent` folder persistence)
+- save server/local drafts (`create_draft`)
+- open interactive Evolution composer windows for human review (`open_composer`)
+- attach local files to outgoing email or drafts
+- move, delete, or mark messages read/unread
+- automatically fetch uncached message content when Evolution is running
 
 From the repository root, run:
 
 ```bash
 make install-bridge
 ```
-
-The installer is Debian/Ubuntu-oriented. It may install build packages with
-`sudo`, builds a native Evolution plugin, installs it into the system plugin
-directory, and closes Evolution so the new plugin can load. Save any drafts
-first, then launch Evolution again.
 
 Verify the running bridge with:
 
@@ -133,22 +120,25 @@ See the [bridge guide](evolution-mcp-automation-bridge/README.md) for details.
 
 > [!WARNING]
 > Mail and calendar write tools act immediately when your MCP client calls
-> them. The server has no confirmation screen. Enable tool approval in your
-> client and review send, move, delete, and calendar-change requests carefully.
+> them. Prefer `create_draft` or `open_composer` when human review is desired
+> before sending mail, and enable tool approval in your MCP client.
 
-## Limits and data behavior
+## Response contracts and limits
 
-- Mail search uses Evolution's cached subject, sender, and preview metadata. It
-  does not search complete message bodies.
-- Full bodies and attachments normally require the message to be synced in
-  Evolution's local cache. Open or sync a missing message in Evolution first.
-- Email body output is limited to 10,000 characters.
-- Outgoing mail accepts at most 10 attachments and 20 MiB total.
+- List tools return compact JSON envelopes:
+  `{"items":[...],"meta":{"returned":...,"total":...,"offset":...,"has_more":...}}`.
+- Errors return structured JSON:
+  `{"error":{"code":"...","message":"...","retryable":false,"hint":"..."}}`.
+- When `org.gnome.Evolution.McpAutomationBridge` is active on session D-Bus,
+  uncached mail reads fall back to the bridge automatically and tag responses
+  with `"source":"bridge"`. Set `EDS_MCP_ENABLE_EVOLUTION_BRIDGE_READS=0` to
+  force offline-only cache reads.
+- `get_email_body` defaults to 10,000 characters; `get_email_thread` strips
+  quoted reply history by default and caps per-message text at 3,000 characters.
+- Outgoing mail, drafts, and composer windows accept at most 10 attachments and
+  20 MiB total.
 - Document parsing accepts files up to 5 MiB and returns at most 30,000
   characters.
-- Downloaded attachments are written to a temporary directory.
-- `read_document` can read any supported local file available to the server
-  process. Do not expose this server to an untrusted MCP client.
 
 ## Troubleshooting
 
@@ -165,18 +155,12 @@ The server only discovers enabled EDS sources.
 
 ### An email body or attachment is not found
 
-Open or sync that message in Evolution so it enters the local cache. Advanced
-users can opt into bridge-based reads by setting
-`EDS_MCP_ENABLE_EVOLUTION_BRIDGE_READS=1` for the MCP server.
-
-### Sending or changing mail fails
-
-Make sure Evolution is running, the automation bridge is installed, and the
-bridge check above succeeds.
+Open Evolution (with the bridge installed) so uncached items fetch on demand, or
+sync the folder in Evolution for offline cache access.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, project layout,
-tests, and bridge integration checks.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, module layout,
+linting, typechecking, tests, and bridge integration checks.
 
-Licensed under the [MIT License](LICENSE).
+Licensed under the [GPL-3.0-only License](LICENSE).

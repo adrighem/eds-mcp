@@ -35,6 +35,8 @@ class TestMcpAutomationBridge(unittest.TestCase):
         )
         introspection_xml, = result.unpack()
         self.assertIn('SendMailWithAttachments', introspection_xml)
+        self.assertIn('SaveDraft', introspection_xml)
+        self.assertIn('OpenComposer', introspection_xml)
 
     def test_invalid_account_returns_error(self):
         # We test that the bridge responds correctly to an invalid account

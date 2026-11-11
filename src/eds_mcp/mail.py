@@ -1,485 +1,474 @@
-import os
-import sqlite3
+"""Thin public facade and read entrypoints for EDS MCP mail operations."""
+
+from __future__ import annotations
+
+import asyncio
 import json
 import logging
-import asyncio
+import os
+import shutil
+import sqlite3
 import tempfile
-from datetime import datetime
-from typing import Optional, Union, Any
+from collections.abc import Callable
+from typing import Any
 
+from . import (
+    BridgeCallError,
+    CacheMissError,
+    EdsClientError,
+    EdsMcpError,
+    ResourceNotFoundError,
+    ValidationError,
+    compact_json,
+    error_from_exception,
+    ok_envelope,
+    paginated_envelope,
+    strip_empty,
+)
+from . import mail_actions as _actions
+from . import mail_bridge as _bridge
+from . import mail_cache as _cache
+from . import mail_db as _db
+from . import mail_threads as _threads
 from .env import setup_environment
+
 setup_environment()
 
 from gi.repository import EDataServer, Gio, GLib  # noqa: E402
 
-from .mail_bridge import (
-    EVOLUTION_BUS_NAME,
-    EVOLUTION_OBJECT_PATH,
-    EVOLUTION_INTERFACE_NAME,
-    BRIDGE_READ_FALLBACK_ENV,
-    BRIDGE_CALL_TIMEOUT_MS,
-    bridge_read_fallback_enabled,
-    get_dbus_proxy as _bridge_get_dbus_proxy,
-    call_bridge_method as _bridge_call_bridge_method,
-)
-from .mail_parser import (
-    MAX_ATTACHMENT_COUNT,
-    MAX_ATTACHMENT_TOTAL_BYTES,
-    MAX_BODY_LENGTH,
-    clean_html,
-    extract_text_from_message,
-    get_cached_message_path,
-    read_cached_message,
-    list_attachments_from_message,
-    save_attachment_from_message,
-    normalize_attachment_paths,
-    extract_reply_headers,
-    normalize_recipients,
-)
-
 logger = logging.getLogger(__name__)
+
+BRIDGE_CALL_TIMEOUT_MS = _bridge.BRIDGE_CALL_TIMEOUT_MS
+BRIDGE_READ_FALLBACK_ENV = _bridge.BRIDGE_READ_FALLBACK_ENV
+get_mail_db_path = _db.get_mail_db_path
+resolve_folder_name = _db.resolve_folder_name
+read_cached_message = _cache.read_cached_message
+normalize_recipients = _cache.normalize_recipients
 
 
 def get_dbus_proxy() -> Gio.DBusProxy:
-    """Acquires D-Bus proxy for Evolution MCP automation bridge."""
-    return _bridge_get_dbus_proxy()
+    """Acquire D-Bus proxy for Evolution MCP automation bridge."""
+    return _bridge.get_dbus_proxy()
 
 
-def call_bridge_method(method_name: str, variant_signature: str, parameters: tuple) -> Any:
+def is_bridge_reachable() -> bool:
+    """Return True if Evolution's automation bridge is active on session D-Bus."""
+    return _bridge.is_bridge_reachable(proxy_getter=get_dbus_proxy)
+
+
+def bridge_read_fallback_enabled() -> bool:
+    """Return True if uncached reads may fall back to Evolution's D-Bus bridge."""
+    return _bridge.bridge_read_fallback_enabled(proxy_getter=get_dbus_proxy)
+
+
+def call_bridge_method(
+    method_name: str, variant_signature: str, parameters: tuple[Any, ...]
+) -> Any:
     """Call method on Evolution automation bridge via configured proxy."""
-    return _bridge_call_bridge_method(
-        method_name,
-        variant_signature,
-        parameters,
-        proxy_getter=get_dbus_proxy,
+    return _bridge.call_bridge_method(
+        method_name, variant_signature, parameters, proxy_getter=get_dbus_proxy
     )
 
 
-def get_mail_db_path(account_uid: str) -> Optional[str]:
-    """Resolves SQLite database path for given Evolution mail account."""
-    potential_paths = [
-        os.path.expanduser(f"~/.cache/evolution/mail/{account_uid}/folders.db"),
-        os.path.expanduser(f"~/.local/share/evolution/mail/{account_uid}/folders.db"),
-    ]
-    for path in potential_paths:
-        if os.path.exists(path):
-            return path
-    return None
+def _require_db_path(account_uid: str) -> str:
+    db_path = get_mail_db_path(account_uid)
+    if not db_path:
+        raise ResourceNotFoundError(f"Could not find mail database for account '{account_uid}'.")
+    return db_path
+
+
+async def _run_mail_op(fn: Callable[[], str]) -> str:
+    def _wrapped() -> str:
+        try:
+            return fn()
+        except (
+            EdsMcpError,
+            ValueError,
+            json.JSONDecodeError,
+            sqlite3.Error,
+            ConnectionError,
+            OSError,
+            RuntimeError,
+            GLib.Error,
+        ) as exc:
+            return error_from_exception(exc)
+
+    return await asyncio.to_thread(_wrapped)
 
 
 async def list_mail_accounts_logic() -> str:
-    """Lists all configured email accounts."""
+    """List all configured and enabled Evolution email accounts."""
+
     def _logic() -> str:
         try:
             registry = EDataServer.SourceRegistry.new_sync(None)
-            sources = registry.list_sources(EDataServer.SOURCE_EXTENSION_MAIL_ACCOUNT)
-            accounts = []
-            for source in sources:
+            accounts: list[dict[str, Any]] = []
+            for source in registry.list_sources(EDataServer.SOURCE_EXTENSION_MAIL_ACCOUNT):
                 if source.get_enabled():
-                    parent_uid = source.get_parent()
-                    parent_name = None
-                    if parent_uid:
-                        parent_source = registry.ref_source(parent_uid)
-                        if parent_source:
-                            parent_name = parent_source.get_display_name()
-
-                    accounts.append({
-                        "uid": source.get_uid(),
-                        "name": source.get_display_name(),
-                        "parent_uid": parent_uid,
-                        "parent_name": parent_name,
-                    })
-            return json.dumps(accounts, separators=(',', ':'))
-        except (GLib.Error, RuntimeError) as e:
+                    p_uid = source.get_parent()
+                    p_src = registry.ref_source(p_uid) if p_uid else None
+                    accounts.append(
+                        strip_empty(
+                            {
+                                "uid": source.get_uid(),
+                                "name": source.get_display_name(),
+                                "parent_uid": p_uid,
+                                "parent_name": p_src.get_display_name() if p_src else None,
+                            }
+                        )
+                    )
+            return paginated_envelope(accounts, total=len(accounts), offset=0)
+        except (GLib.Error, RuntimeError) as exc:
             logger.exception("Failed to list mail accounts")
-            return f"Error: {e}"
+            raise EdsClientError(str(exc)) from exc
 
-    return await asyncio.to_thread(_logic)
+    return await _run_mail_op(_logic)
 
 
 async def list_mail_folders_logic(account_uid: str) -> str:
-    """Lists folders for specific mail account."""
-    db_path = get_mail_db_path(account_uid)
-    if not db_path:
-        return f"Error: Could not find mail database for account {account_uid}"
+    """List all indexed mail folders for an account."""
 
     def _logic() -> str:
-        try:
-            conn = sqlite3.connect(db_path)
-            cursor = conn.cursor()
-            cursor.execute("SELECT folder_name, unread_count, visible_count FROM folders")
+        with _db.open_readonly_db(_require_db_path(account_uid)) as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT folder_name, unread_count, visible_count FROM folders")
             folders = [
-                {"name": row[0], "unread": row[1], "total": row[2]}
-                for row in cursor.fetchall()
+                {"name": str(r[0]), "unread": int(r[1] or 0), "total": int(r[2] or 0)}
+                for r in cur.fetchall()
             ]
-            conn.close()
-            return json.dumps(folders, separators=(',', ':'))
-        except sqlite3.Error as e:
-            logger.exception("Database error for account %s", account_uid)
-            return f"Error: {e}"
+        return paginated_envelope(folders, total=len(folders), offset=0)
 
-    return await asyncio.to_thread(_logic)
+    return await _run_mail_op(_logic)
 
 
-async def get_emails_logic(account_uid: str, folder_name: str = "Inbox", limit: int = 10, format: str = "json") -> str:
-    """Gets recent emails from specific folder with validation."""
-    db_path = get_mail_db_path(account_uid)
-    if not db_path:
-        return f"Error: Could not find mail database for account {account_uid}"
-
-    def _logic() -> str:
-        try:
-            conn = sqlite3.connect(db_path)
-            cursor = conn.cursor()
-
-            cursor.execute("SELECT folder_name FROM folders WHERE folder_name = ?", (folder_name,))
-            if not cursor.fetchone():
-                conn.close()
-                return f"Error: Folder '{folder_name}' not found in account {account_uid}"
-
-            query = f"SELECT uid, subject, mail_from, dreceived, preview FROM '{folder_name}' ORDER BY dreceived DESC LIMIT ?"
-            cursor.execute(query, (limit,))
-
-            emails = []
-            for row in cursor.fetchall():
-                try:
-                    date_str = datetime.fromtimestamp(row[3]).strftime("%Y-%m-%d %H:%M:%S")
-                except (ValueError, OSError, OverflowError):
-                    date_str = str(row[3])
-
-                email = {
-                    "uid": row[0],
-                    "subject": row[1],
-                    "from": row[2],
-                    "date": date_str,
-                }
-                if row[4] and row[4].strip():
-                    email["preview"] = row[4].strip()
-                emails.append(email)
-            conn.close()
-
-            if format == "summary":
-                if not emails:
-                    return f"No emails found in {folder_name}."
-
-                output = [f"## Recent emails in {folder_name}"]
-                for e in emails:
-                    sender = e["from"].split("<")[0].strip() or e["from"]
-                    line = f"* **{e['subject']}** (from: {sender}, {e['date']})"
-                    if "preview" in e:
-                        snippet = e["preview"][:100] + "..." if len(e["preview"]) > 100 else e["preview"]
-                        line += f"\n  _{snippet}_"
-                    output.append(line)
-                return "\n".join(output)
-
-            return json.dumps(emails, separators=(',', ':'))
-        except sqlite3.Error as e:
-            logger.exception("Failed to fetch emails from %s", folder_name)
-            return f"Error: {e}"
-
-    return await asyncio.to_thread(_logic)
-
-
-async def search_emails_logic(account_uid: str, query: str, folder_name: Optional[str] = None, limit: int = 10) -> str:
-    """Searches emails for query across all folders or specific folder."""
-    db_path = get_mail_db_path(account_uid)
-    if not db_path:
-        return f"Error: Could not find mail database for account {account_uid}"
+async def get_emails_logic(
+    account_uid: str,
+    folder_name: str = "Inbox",
+    limit: int = 10,
+    offset: int = 0,
+    format: str = "json",
+) -> str:
+    """Fetch recent emails from a canonical folder as compact JSON or markdown summary."""
 
     def _logic() -> str:
-        try:
-            conn = sqlite3.connect(db_path)
-            cursor = conn.cursor()
+        if limit < 1 or limit > 200 or offset < 0:
+            raise ValidationError("Invalid limit (1-200) or offset (>= 0).")
+        db_path = _require_db_path(account_uid)
+        resolved = resolve_folder_name(
+            account_uid, folder_name, db_path_getter=get_mail_db_path, strict=True
+        )
+        with _db.open_readonly_db(db_path) as conn:
+            emails, total = _db.fetch_folder_page(conn, resolved, limit, offset)
 
-            folders_to_search = []
-            if folder_name:
-                cursor.execute("SELECT folder_name FROM folders WHERE folder_name = ?", (folder_name,))
-                if not cursor.fetchone():
-                    conn.close()
-                    return f"Error: Folder '{folder_name}' not found in account {account_uid}"
-                folders_to_search.append(folder_name)
-            else:
-                cursor.execute("SELECT folder_name FROM folders")
-                folders_to_search = [row[0] for row in cursor.fetchall()]
+        if format == "summary":
+            if not emails:
+                return f"No emails found in {resolved}."
+            output = [f"## Recent emails in {resolved}"]
+            for item in emails:
+                sender = item["from"].split("<")[0].strip() or item["from"]
+                line = f"* **{item['subject']}** (from: {sender}, {item['date']})"
+                if p := item.get("preview"):
+                    line += f"\n  _{p[:100] + '...' if len(p) > 100 else p}_"
+                output.append(line)
+            return "\n".join(output)
+        return paginated_envelope(
+            emails, total=total, offset=offset, extra_meta={"folder": resolved}
+        )
 
-            all_results = []
-            search_pattern = f"%{query}%"
-
-            for folder in folders_to_search:
-                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (folder,))
-                if not cursor.fetchone():
-                    continue
-
-                sql = f"""
-                    SELECT uid, subject, mail_from, dreceived, preview, '{folder}' as folder
-                    FROM '{folder}'
-                    WHERE subject LIKE ? OR preview LIKE ? OR mail_from LIKE ?
-                    ORDER BY dreceived DESC
-                    LIMIT ?
-                """
-                cursor.execute(sql, (search_pattern, search_pattern, search_pattern, limit))
-
-                for row in cursor.fetchall():
-                    try:
-                        date_str = datetime.fromtimestamp(row[3]).strftime("%Y-%m-%d %H:%M:%S")
-                    except (ValueError, OSError, OverflowError):
-                        date_str = str(row[3])
-
-                    res = {
-                        "uid": row[0],
-                        "subject": row[1],
-                        "from": row[2],
-                        "date": date_str,
-                        "folder": row[5],
-                    }
-                    if row[4] and row[4].strip():
-                        res["preview"] = row[4].strip()
-                    all_results.append(res)
-
-            all_results.sort(key=lambda x: x['date'], reverse=True)
-            all_results = all_results[:limit]
-
-            grouped: dict[str, list[dict[str, Any]]] = {}
-            for item in all_results:
-                f = item.pop("folder")
-                grouped.setdefault(f, []).append(item)
-
-            conn.close()
-            return json.dumps(grouped, separators=(',', ':'))
-        except sqlite3.Error as e:
-            logger.exception("Failed to search emails for query '%s'", query)
-            return f"Error: {e}"
-
-    return await asyncio.to_thread(_logic)
+    return await _run_mail_op(_logic)
 
 
-async def get_email_body_logic(account_uid: str, message_uid: str, folder_name: str = "INBOX") -> str:
-    """Retrieves and optimizes body/content of email message."""
+async def search_emails_logic(
+    account_uid: str,
+    query: str = "",
+    folder_name: str | None = None,
+    limit: int = 25,
+    offset: int = 0,
+    *,
+    from_query: str | None = None,
+    to_query: str | None = None,
+    since: str | None = None,
+    until: str | None = None,
+    unread_only: bool = False,
+    dedupe_threads: bool = False,
+    search_body: bool = False,
+    max_scanned: int = 500,
+) -> str:
+    """Search emails with Unicode case-folding, recipient/date filters, and opt-in body scan."""
+
     def _logic() -> str:
-        try:
-            raw_content = read_cached_message(account_uid, message_uid, folder_name)
+        q_clean = (query or "").strip()
+        from_clean, to_clean = (from_query or "").strip(), (to_query or "").strip()
+        if not any([q_clean, from_clean, to_clean, since, until, unread_only]):
+            raise ValidationError("Provide 'query' or at least one filter.")
+        if limit < 1 or limit > 200 or offset < 0 or max_scanned < 1 or max_scanned > 5000:
+            raise ValidationError("Invalid pagination or max_scanned bounds.")
 
-            if raw_content is None:
-                if not bridge_read_fallback_enabled():
-                    return (
-                        f"Error: Message content for UID {message_uid} was not found in the local Evolution cache. "
-                        f"Open or sync the message in Evolution first. To allow the in-process Evolution bridge "
-                        f"fallback for read operations, set {BRIDGE_READ_FALLBACK_ENV}=1."
-                    )
+        since_ts = _db.parse_iso_timestamp(since, end_of_day=False) if since else None
+        until_ts = _db.parse_iso_timestamp(until, end_of_day=True) if until else None
+        if since_ts is not None and until_ts is not None and since_ts > until_ts:
+            raise ValidationError("'since' must be earlier than or equal to 'until'.")
 
-                try:
-                    success, dbus_content = call_bridge_method(
-                        "GetMessage",
-                        '(sss)',
-                        (account_uid, message_uid, folder_name),
-                    )
-                    if success:
-                        raw_content = dbus_content
-                    else:
-                        return f"Error: Message content for UID {message_uid} not found locally, and D-Bus fetch failed: {dbus_content}"
-                except Exception as dbus_e:
-                    logger.warning("D-Bus fallback failed for %s: %s", message_uid, dbus_e)
-                    return f"Error: Message content for UID {message_uid} not found in {folder_name}. It might not be cached locally."
+        db_path = _require_db_path(account_uid)
+        if folder_name:
+            target_folders = [
+                resolve_folder_name(
+                    account_uid, folder_name, db_path_getter=get_mail_db_path, strict=True
+                )
+            ]
+        else:
+            with _db.open_readonly_db(db_path) as conn:
+                cur = conn.cursor()
+                cur.execute("SELECT folder_name FROM folders")
+                target_folders = [
+                    str(r[0])
+                    for r in cur.fetchall()
+                    if r and r[0] and not _db.is_trash_or_junk_folder(str(r[0]))
+                ]
 
-            return extract_text_from_message(raw_content)
-        except Exception as e:
-            logger.exception("Failed to read email body for %s", message_uid)
-            return f"Error: {e}"
+        def _match_body(uid: str, f_name: str, needle_cf: str) -> tuple[bool, bool]:
+            raw = read_cached_message(account_uid, uid, f_name)
+            if raw is None:
+                return False, True
+            return needle_cf in _cache.extract_body_text(raw, strip_quoted=False).casefold(), False
 
-    return await asyncio.to_thread(_logic)
-
-
-async def move_email_logic(account_uid: str, message_uid: str, source_folder: str, dest_folder: str) -> str:
-    """Moves email using Evolution extension D-Bus interface."""
-    def _logic() -> str:
-        try:
-            success, message = call_bridge_method(
-                "MoveMessage",
-                '(ssss)',
-                (account_uid, message_uid, source_folder, dest_folder),
+        with _db.open_readonly_db(db_path) as conn:
+            ordered, scanned_count, cache_misses = _db.execute_folder_search(
+                conn,
+                target_folders,
+                q_clean=q_clean,
+                from_clean=from_clean,
+                to_clean=to_clean,
+                since_ts=since_ts,
+                until_ts=until_ts,
+                unread_only=unread_only,
+                search_body=search_body,
+                max_scanned=max_scanned,
+                limit=limit,
+                offset=offset,
+                body_matcher=_match_body,
             )
-            return f"Successfully moved email: {message}" if success else f"Failed to move email: {message}"
-        except Exception as e:
-            logger.error("D-Bus move failed: %s", e)
-            return f"Error: Failed to move email via Evolution D-Bus. Ensure Evolution is running with the MCP automation bridge plugin. Details: {e}"
 
-    return await asyncio.to_thread(_logic)
+        if dedupe_threads:
+            deduped: list[dict[str, Any]] = []
+            by_subj: dict[str, dict[str, Any]] = {}
+            for item in ordered:
+                base = _cache.normalize_subject(item.get("subject")).casefold()
+                key = base or f"uid:{item.get('folder')}:{item['uid']}"
+                if key not in by_subj:
+                    entry = {**item, "thread_count": 1}
+                    by_subj[key] = entry
+                    deduped.append(entry)
+                else:
+                    by_subj[key]["thread_count"] = int(by_subj[key]["thread_count"]) + 1
+            ordered = deduped
+
+        extra_meta: dict[str, Any] = {}
+        if search_body:
+            extra_meta.update({"scanned_count": scanned_count, "cache_misses": cache_misses})
+        if folder_name and target_folders:
+            extra_meta["folder"] = target_folders[0]
+        return paginated_envelope(
+            ordered[offset : offset + limit],
+            total=len(ordered),
+            offset=offset,
+            extra_meta=extra_meta or None,
+        )
+
+    return await _run_mail_op(_logic)
 
 
-async def mark_as_read_logic(account_uid: str, message_uid: str, folder_name: str, read: bool = True) -> str:
-    """Marks email as read or unread using D-Bus interface."""
+async def get_email_body_logic(
+    account_uid: str,
+    message_uid: str,
+    folder_name: str = "Inbox",
+    max_chars: int = _cache.MAX_BODY_LENGTH,
+) -> str:
+    """Retrieve parsed email headers, body, source, and truncation metadata."""
+
     def _logic() -> str:
-        try:
-            success, message = call_bridge_method(
-                "MarkAsRead",
-                '(sssb)',
-                (account_uid, message_uid, folder_name, read),
+        if max_chars < 100:
+            raise ValidationError("'max_chars' must be >= 100.")
+        resolved = resolve_folder_name(account_uid, folder_name, db_path_getter=get_mail_db_path)
+        raw_content, source = read_cached_message(account_uid, message_uid, resolved), "cache"
+        if raw_content is None:
+            if not bridge_read_fallback_enabled():
+                raise CacheMissError(
+                    f"Message UID '{message_uid}' not found in local Evolution cache for '{resolved}'."
+                )
+            ok, dbus_content = call_bridge_method(
+                "GetMessage", "(sss)", (account_uid, message_uid, resolved)
             )
-            return f"{'Successfully' if success else 'Failed to'} mark as {'read' if read else 'unread'}: {message}"
-        except Exception as e:
-            logger.error("D-Bus mark as read failed: %s", e)
-            return f"Error: {e}. Ensure the MCP automation bridge plugin supports 'MarkAsRead'."
+            if not ok or not dbus_content:
+                raise BridgeCallError(
+                    f"Message UID '{message_uid}' not in local cache and bridge fetch failed: {dbus_content}"
+                )
+            raw_content, source = str(dbus_content), "bridge"
 
-    return await asyncio.to_thread(_logic)
+        parsed = _cache.parse_message_envelope(raw_content, max_chars=max_chars, strip_quoted=False)
+        payload = strip_empty(
+            {
+                "uid": message_uid,
+                "folder": resolved,
+                "from": parsed["from"],
+                "to": parsed["to"],
+                "cc": parsed["cc"],
+                "subject": parsed["subject"],
+                "date": parsed["date"],
+                "message_id": parsed["message_id"],
+                "in_reply_to": parsed["in_reply_to"],
+                "body": parsed["body"],
+                "source": source,
+            }
+        )
+        payload["truncated"] = bool(parsed["truncated"])
+        return compact_json(payload)
+
+    return await _run_mail_op(_logic)
 
 
-async def delete_message_logic(account_uid: str, message_uid: str, folder_name: str) -> str:
-    """Deletes email using D-Bus interface."""
+async def list_attachments_logic(
+    account_uid: str, message_uid: str, folder_name: str = "Inbox"
+) -> str:
+    """List attachments on an email via local cache or Evolution bridge fallback."""
+
     def _logic() -> str:
-        try:
-            success, message = call_bridge_method(
-                "DeleteMessage",
-                '(sss)',
-                (account_uid, message_uid, folder_name),
+        resolved = resolve_folder_name(account_uid, folder_name, db_path_getter=get_mail_db_path)
+        raw_content = read_cached_message(account_uid, message_uid, resolved)
+        if raw_content is not None:
+            atts = _cache.list_attachments_from_message(raw_content)
+            return paginated_envelope(
+                atts, total=len(atts), offset=0, extra_meta={"source": "cache", "folder": resolved}
             )
-            return f"{'Successfully' if success else 'Failed to'} delete message: {message}"
-        except Exception as e:
-            logger.error("D-Bus delete failed: %s", e)
-            return f"Error: {e}. Ensure the MCP automation bridge plugin supports 'DeleteMessage'."
+        if not bridge_read_fallback_enabled():
+            raise CacheMissError(f"Message UID '{message_uid}' not in local Evolution cache.")
+        ok, att_json = call_bridge_method(
+            "ListAttachments", "(sss)", (account_uid, message_uid, resolved)
+        )
+        if not ok:
+            raise BridgeCallError(f"ListAttachments failed: {att_json}")
+        parsed_atts = json.loads(att_json) if att_json else []
+        atts_list = parsed_atts if isinstance(parsed_atts, list) else []
+        return paginated_envelope(
+            atts_list,
+            total=len(atts_list),
+            offset=0,
+            extra_meta={"source": "bridge", "folder": resolved},
+        )
 
-    return await asyncio.to_thread(_logic)
+    return await _run_mail_op(_logic)
+
+
+async def save_attachment_logic(
+    account_uid: str, message_uid: str, folder_name: str, attachment_name: str
+) -> str:
+    """Save an attachment to a temporary file and return its local path."""
+
+    def _logic() -> str:
+        safe_name = os.path.basename(attachment_name)
+        if not safe_name:
+            raise ValidationError("Attachment name is invalid.")
+        resolved = resolve_folder_name(account_uid, folder_name, db_path_getter=get_mail_db_path)
+        raw_content = read_cached_message(account_uid, message_uid, resolved)
+        if raw_content is not None:
+            dest = _cache.save_attachment_from_message(raw_content, attachment_name)
+            if not dest:
+                raise ResourceNotFoundError(
+                    f"Attachment '{safe_name}' not found on message '{message_uid}'."
+                )
+            source = "cache"
+        else:
+            if not bridge_read_fallback_enabled():
+                raise CacheMissError(f"Message UID '{message_uid}' not in local Evolution cache.")
+            temp_dir = tempfile.mkdtemp(prefix="eds_mcp_attachment_")
+            dest = os.path.join(temp_dir, safe_name)
+            try:
+                ok, msg = call_bridge_method(
+                    "SaveAttachment",
+                    "(sssss)",
+                    (account_uid, message_uid, resolved, attachment_name, dest),
+                )
+                if not ok:
+                    raise BridgeCallError(f"SaveAttachment failed: {msg}")
+            except BaseException:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+                raise
+            source = "bridge"
+        return ok_envelope(
+            {
+                "uid": message_uid,
+                "folder": resolved,
+                "filename": safe_name,
+                "path": dest,
+                "source": source,
+            }
+        )
+
+    return await _run_mail_op(_logic)
+
+
+def _folder_deps() -> dict[str, Any]:
+    return {"db_path_getter": get_mail_db_path, "bridge_caller": call_bridge_method}
+
+
+def _action_deps() -> dict[str, Any]:
+    return {**_folder_deps(), "cache_reader": read_cached_message}
+
+
+async def get_email_thread_logic(
+    account_uid: str,
+    message_uid: str | None = None,
+    folder_name: str = "Inbox",
+    **kwargs: Any,
+) -> str:
+    """Reconstruct chronological cross-folder email thread with quote stripping."""
+    deps = {**_action_deps(), "bridge_fallback_fn": bridge_read_fallback_enabled, **kwargs}
+    return await _threads.get_email_thread_logic(account_uid, message_uid, folder_name, **deps)
+
+
+async def move_email_logic(
+    account_uid: str, message_uid: str, source_folder: str, dest_folder: str
+) -> str:
+    return await _actions.move_email_logic(
+        account_uid, message_uid, source_folder, dest_folder, **_folder_deps()
+    )
+
+
+async def mark_as_read_logic(
+    account_uid: str, message_uid: str, folder_name: str = "Inbox", read: bool = True
+) -> str:
+    return await _actions.mark_as_read_logic(
+        account_uid, message_uid, folder_name, read, **_folder_deps()
+    )
+
+
+async def delete_message_logic(
+    account_uid: str, message_uid: str, folder_name: str = "Inbox"
+) -> str:
+    return await _actions.delete_message_logic(
+        account_uid, message_uid, folder_name, **_folder_deps()
+    )
 
 
 async def send_mail_logic(
-    account_uid: str,
-    to: Union[str, list[str]],
-    subject: str,
-    body: str,
-    cc: Optional[Union[str, list[str]]] = None,
-    bcc: Optional[Union[str, list[str]]] = None,
-    attachment_paths: Optional[list[str]] = None,
-    reply_to_message_uid: Optional[str] = None,
-    reply_to_folder: str = "Inbox",
+    account_uid: str, to: str | list[str], subject: str, body: str, **kwargs: Any
 ) -> str:
-    """Sends email using D-Bus interface."""
-    def _logic() -> str:
-        try:
-            to_norm = normalize_recipients(to)
-            if not to_norm:
-                return "Error: At least one 'to' recipient is required."
-            cc_norm = normalize_recipients(cc)
-            bcc_norm = normalize_recipients(bcc)
-
-            normalized_paths = normalize_attachment_paths(attachment_paths)
-            in_reply_to = ""
-            references = ""
-
-            if reply_to_message_uid:
-                raw_content = read_cached_message(account_uid, reply_to_message_uid, reply_to_folder)
-                if raw_content is None:
-                    success, raw_content = call_bridge_method(
-                        "GetMessage",
-                        '(sss)',
-                        (account_uid, reply_to_message_uid, reply_to_folder),
-                    )
-                    if not success:
-                        return "Failed to send mail: reply source message could not be read."
-                in_reply_to, references = extract_reply_headers(raw_content)
-
-            if normalized_paths or reply_to_message_uid or cc_norm or bcc_norm:
-                success, message = call_bridge_method(
-                    "SendMailWithAttachments",
-                    '(ssssassss)',
-                    (
-                        account_uid,
-                        to_norm,
-                        subject,
-                        body,
-                        normalized_paths,
-                        in_reply_to,
-                        references,
-                        cc_norm,
-                        bcc_norm,
-                    ),
-                )
-                if not success and "signature" in str(message).lower() and not cc_norm and not bcc_norm:
-                    success, message = call_bridge_method(
-                        "SendMailWithAttachments",
-                        '(ssssasss)',
-                        (
-                            account_uid,
-                            to_norm,
-                            subject,
-                            body,
-                            normalized_paths,
-                            in_reply_to,
-                            references,
-                        ),
-                    )
-            else:
-                success, message = call_bridge_method(
-                    "SendMail",
-                    '(ssss)',
-                    (account_uid, to_norm, subject, body),
-                )
-            return f"{'Successfully sent' if success else 'Failed to send'} mail: {message}"
-        except ValueError as e:
-            return f"Error: {e}"
-        except Exception as e:
-            logger.error("D-Bus send failed: %s", e)
-            return f"Error: {e}. Ensure the Evolution MCP automation bridge is current."
-
-    return await asyncio.to_thread(_logic)
+    return await _actions.send_mail_logic(
+        account_uid, to, subject, body, **{**_action_deps(), **kwargs}
+    )
 
 
-async def list_attachments_logic(account_uid: str, message_uid: str, folder_name: str = "INBOX") -> str:
-    """Lists attachments for specific email message."""
-    def _logic() -> str:
-        try:
-            raw_content = read_cached_message(account_uid, message_uid, folder_name)
-            if raw_content is not None:
-                return json.dumps(list_attachments_from_message(raw_content), separators=(',', ':'))
-
-            if not bridge_read_fallback_enabled():
-                return (
-                    f"Error: Message content for UID {message_uid} was not found in the local Evolution cache. "
-                    f"Open or sync the message in Evolution first. To allow the in-process Evolution bridge "
-                    f"fallback for read operations, set {BRIDGE_READ_FALLBACK_ENV}=1."
-                )
-
-            success, attachments_json = call_bridge_method(
-                "ListAttachments",
-                '(sss)',
-                (account_uid, message_uid, folder_name),
-            )
-            return attachments_json if success else f"Error: {attachments_json}"
-        except Exception as e:
-            logger.error("D-Bus list attachments failed: %s", e)
-            return f"Error: {e}. Ensure the MCP automation bridge plugin supports 'ListAttachments'."
-
-    return await asyncio.to_thread(_logic)
+async def create_draft_logic(
+    account_uid: str, to: str | list[str] = "", subject: str = "", body: str = "", **kwargs: Any
+) -> str:
+    return await _actions.create_draft_logic(
+        account_uid, to, subject, body, **{**_action_deps(), **kwargs}
+    )
 
 
-async def save_attachment_logic(account_uid: str, message_uid: str, folder_name: str, attachment_name: str) -> str:
-    """Saves attachment to temporary file and returns path."""
-    def _logic() -> str:
-        try:
-            raw_content = read_cached_message(account_uid, message_uid, folder_name)
-            if raw_content is not None:
-                dest_path = save_attachment_from_message(raw_content, attachment_name)
-                return f"Attachment saved to: {dest_path}" if dest_path else f"Error: Attachment '{attachment_name}' not found."
-
-            if not bridge_read_fallback_enabled():
-                return (
-                    f"Error: Message content for UID {message_uid} was not found in the local Evolution cache. "
-                    f"Open or sync the message in Evolution first. To allow the in-process Evolution bridge "
-                    f"fallback for read operations, set {BRIDGE_READ_FALLBACK_ENV}=1."
-                )
-
-            temp_dir = tempfile.mkdtemp(prefix="eds_mcp_attachment_")
-            safe_name = os.path.basename(attachment_name)
-            if not safe_name:
-                return "Error: Attachment name is invalid."
-            dest_path = os.path.join(temp_dir, safe_name)
-
-            success, message = call_bridge_method(
-                "SaveAttachment",
-                '(sssss)',
-                (account_uid, message_uid, folder_name, attachment_name, dest_path),
-            )
-            return f"Attachment saved to: {dest_path}" if success else f"Error: {message}"
-        except Exception as e:
-            logger.error("D-Bus save attachment failed: %s", e)
-            return f"Error: {e}. Ensure the MCP automation bridge plugin supports 'SaveAttachment'."
-
-    return await asyncio.to_thread(_logic)
+async def open_composer_logic(
+    account_uid: str, to: str | list[str] = "", subject: str = "", body: str = "", **kwargs: Any
+) -> str:
+    return await _actions.open_composer_logic(
+        account_uid, to, subject, body, **{**_action_deps(), **kwargs}
+    )

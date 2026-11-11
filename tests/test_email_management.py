@@ -1,180 +1,194 @@
-import pytest
+from __future__ import annotations
+
+import json
+from typing import Any
 from unittest.mock import MagicMock
-from eds_mcp.mail import move_email_logic, delete_message_logic
+
+import pytest
+
+from eds_mcp.mail import (
+    delete_message_logic,
+    mark_as_read_logic,
+    move_email_logic,
+    normalize_recipients,
+    send_mail_logic,
+)
+from eds_mcp.mail_parser import MAX_ATTACHMENT_TOTAL_BYTES
+
+
+@pytest.fixture(autouse=True)
+def _isolate_mail_roots(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
+    monkeypatch.setattr(
+        "eds_mcp.mail_db.get_mail_roots",
+        lambda uid: [str(tmp_path / "evo_mail" / uid)],
+    )
+
 
 @pytest.fixture
-def mock_gio(mocker):
-    mock_gio = mocker.patch('gi.repository.Gio')
-    mock_glib = mocker.patch('gi.repository.GLib')
-    return mock_gio, mock_glib
-
-@pytest.fixture
-def mock_dbus_proxy(mocker):
+def mock_dbus_proxy(mocker: Any) -> MagicMock:
     mock_proxy = MagicMock()
-    mocker.patch('eds_mcp.mail.get_dbus_proxy', return_value=mock_proxy)
+    mocker.patch("eds_mcp.mail_bridge.get_dbus_proxy", return_value=mock_proxy)
     return mock_proxy
 
+
 @pytest.mark.asyncio
-async def test_move_email_success(mock_dbus_proxy, mock_gio):
-    # Mock result of MoveMessage
+async def test_move_email_success(mock_dbus_proxy: MagicMock, mocker: Any) -> None:
+    mocker.patch("eds_mcp.mail.get_mail_db_path", return_value=None)
     mock_result = MagicMock()
     mock_result.unpack.return_value = (True, "Success")
     mock_dbus_proxy.call_sync.return_value = mock_result
 
-    # Run
-    result = await move_email_logic("acc1", "msg1", "Inbox", "Archive")
+    payload = json.loads(await move_email_logic("acc1", "msg1", "Inbox", "Archive"))
 
-    assert "Successfully moved email: Success" in result
+    assert payload["status"] == "moved"
+    assert payload["uid"] == "msg1"
+    assert payload["source_folder"] == "Inbox"
+    assert payload["dest_folder"] == "Archive"
     mock_dbus_proxy.call_sync.assert_called_once()
-    # Check variant construction
-    args = mock_dbus_proxy.call_sync.call_args[0]
-    assert args[0] == "MoveMessage"
+    assert mock_dbus_proxy.call_sync.call_args[0][0] == "MoveMessage"
+
 
 @pytest.mark.asyncio
-async def test_move_email_failure(mock_dbus_proxy, mock_gio):
-    # Mock failure result
+async def test_move_email_failure(mock_dbus_proxy: MagicMock, mocker: Any) -> None:
+    mocker.patch("eds_mcp.mail.get_mail_db_path", return_value=None)
     mock_result = MagicMock()
     mock_result.unpack.return_value = (False, "Folder not found")
     mock_dbus_proxy.call_sync.return_value = mock_result
 
-    # Run
-    result = await move_email_logic("acc1", "msg1", "Inbox", "NonExistent")
+    payload = json.loads(await move_email_logic("acc1", "msg1", "Inbox", "NonExistent"))
 
-    assert "Failed to move email: Folder not found" in result
+    assert payload["error"]["code"] == "BRIDGE_CALL_FAILED"
+    assert "Folder not found" in payload["error"]["message"]
+
 
 @pytest.mark.asyncio
-async def test_delete_email_success(mock_dbus_proxy, mock_gio):
-    # Mock result of DeleteMessage
+async def test_delete_email_success(mock_dbus_proxy: MagicMock, mocker: Any) -> None:
+    mocker.patch("eds_mcp.mail.get_mail_db_path", return_value=None)
     mock_result = MagicMock()
     mock_result.unpack.return_value = (True, "Success")
     mock_dbus_proxy.call_sync.return_value = mock_result
 
-    # Run
-    result = await delete_message_logic("acc1", "msg1", "Inbox")
+    payload = json.loads(await delete_message_logic("acc1", "msg1", "Inbox"))
 
-    assert "Successfully delete message: Success" in result
+    assert payload["status"] == "deleted"
+    assert payload["uid"] == "msg1"
     mock_dbus_proxy.call_sync.assert_called_once()
 
+
 @pytest.mark.asyncio
-async def test_delete_email_failure(mock_dbus_proxy, mock_gio):
-    # Mock failure result
+async def test_delete_email_failure(mock_dbus_proxy: MagicMock, mocker: Any) -> None:
+    mocker.patch("eds_mcp.mail.get_mail_db_path", return_value=None)
     mock_result = MagicMock()
     mock_result.unpack.return_value = (False, "Message not found")
     mock_dbus_proxy.call_sync.return_value = mock_result
 
-    # Run
-    result = await delete_message_logic("acc1", "msg1", "Inbox")
+    payload = json.loads(await delete_message_logic("acc1", "msg1", "Inbox"))
 
-    assert "Failed to delete message: Message not found" in result
+    assert payload["error"]["code"] == "BRIDGE_CALL_FAILED"
+    assert "Message not found" in payload["error"]["message"]
+
 
 @pytest.mark.asyncio
-async def test_mark_email_as_read_success(mock_dbus_proxy, mock_gio):
-    from eds_mcp.mail import mark_as_read_logic
-    # Mock result
+async def test_mark_email_as_read_success(mock_dbus_proxy: MagicMock, mocker: Any) -> None:
+    mocker.patch("eds_mcp.mail.get_mail_db_path", return_value=None)
     mock_result = MagicMock()
     mock_result.unpack.return_value = (True, "Message marked as read")
     mock_dbus_proxy.call_sync.return_value = mock_result
 
-    # Run
-    result = await mark_as_read_logic("acc1", "msg1", "Inbox", True)
+    payload = json.loads(await mark_as_read_logic("acc1", "msg1", "Inbox", True))
 
-    assert "Successfully mark as read: Message marked as read" in result
+    assert payload["status"] == "updated"
+    assert payload["read"] is True
     mock_dbus_proxy.call_sync.assert_called_once()
-    args = mock_dbus_proxy.call_sync.call_args[0]
-    assert args[0] == "MarkAsRead"
-
-@pytest.mark.asyncio
-async def test_dbus_exception_handling(mock_dbus_proxy, mock_gio):
-    # Mock D-Bus error
-    mock_dbus_proxy.call_sync.side_effect = Exception("D-Bus error")
-
-    # Run
-    result = await move_email_logic("acc1", "msg1", "Inbox", "Archive")
-
-    assert "Error: Failed to move email via Evolution D-Bus" in result
-    assert "D-Bus error" in result
+    assert mock_dbus_proxy.call_sync.call_args[0][0] == "MarkAsRead"
 
 
 @pytest.mark.asyncio
-async def test_send_mail_success(mocker):
-    from eds_mcp.mail import send_mail_logic
+async def test_dbus_exception_handling(mock_dbus_proxy: MagicMock, mocker: Any) -> None:
+    mocker.patch("eds_mcp.mail.get_mail_db_path", return_value=None)
+    mock_dbus_proxy.call_sync.side_effect = RuntimeError("D-Bus error")
 
+    payload = json.loads(await move_email_logic("acc1", "msg1", "Inbox", "Archive"))
+
+    assert payload["error"]["code"] == "BRIDGE_CALL_FAILED"
+    assert "D-Bus error" in payload["error"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_send_mail_success(mocker: Any) -> None:
     bridge_call = mocker.patch(
         "eds_mcp.mail.call_bridge_method",
         return_value=(True, "queued"),
     )
 
-    result = await send_mail_logic("acc1", "to@example.test", "Subject", "Body")
+    payload = json.loads(await send_mail_logic("acc1", "to@example.test", "Subject", "Body"))
 
-    assert "Successfully sent mail: queued" in result
+    assert payload["status"] == "sent"
+    assert payload["message"] == "queued"
     bridge_call.assert_called_once_with(
         "SendMail",
-        '(ssss)',
+        "(ssss)",
         ("acc1", "to@example.test", "Subject", "Body"),
     )
 
 
 @pytest.mark.asyncio
-async def test_send_mail_empty_attachment_list_uses_legacy_method(mocker):
-    from eds_mcp.mail import send_mail_logic
-
+async def test_send_mail_empty_attachment_list_uses_legacy_method(mocker: Any) -> None:
     bridge_call = mocker.patch(
         "eds_mcp.mail.call_bridge_method",
         return_value=(True, "queued"),
     )
 
-    await send_mail_logic(
-        "acc1", "to@example.test", "Subject", "Body", attachment_paths=[]
-    )
+    await send_mail_logic("acc1", "to@example.test", "Subject", "Body", attachment_paths=[])
 
     bridge_call.assert_called_once_with(
         "SendMail",
-        '(ssss)',
+        "(ssss)",
         ("acc1", "to@example.test", "Subject", "Body"),
     )
 
 
 @pytest.mark.asyncio
-async def test_send_mail_with_attachment(mocker, tmp_path):
-    from eds_mcp.mail import send_mail_logic
-
+async def test_send_mail_with_attachment_builds_valid_glib_variant(
+    mock_dbus_proxy: MagicMock, tmp_path: Any
+) -> None:
     attachment = tmp_path / "report.xlsx"
     attachment.write_bytes(b"workbook")
-    bridge_call = mocker.patch(
-        "eds_mcp.mail.call_bridge_method",
-        return_value=(True, "queued"),
-    )
+    mock_result = MagicMock()
+    mock_result.unpack.return_value = (True, "queued")
+    mock_dbus_proxy.call_sync.return_value = mock_result
 
-    result = await send_mail_logic(
-        "acc1",
-        "to@example.test",
-        "Subject",
-        "Body",
-        attachment_paths=[str(attachment)],
-    )
-
-    assert result == "Successfully sent mail: queued"
-    bridge_call.assert_called_once_with(
-        "SendMailWithAttachments",
-        '(ssssassss)',
-        (
+    payload = json.loads(
+        await send_mail_logic(
             "acc1",
             "to@example.test",
             "Subject",
             "Body",
-            [str(attachment.resolve())],
-            "",
-            "",
-            "",
-            "",
-        ),
+            attachment_paths=[str(attachment)],
+        )
+    )
+
+    assert payload["status"] == "sent"
+    call_args = mock_dbus_proxy.call_sync.call_args[0]
+    assert call_args[0] == "SendMailWithAttachments"
+    assert call_args[1].get_type_string() == "(ssssasssss)"
+    assert call_args[1].unpack() == (
+        "acc1",
+        "to@example.test",
+        "Subject",
+        "Body",
+        [str(attachment.resolve())],
+        "",
+        "",
+        "",
+        "",
     )
 
 
 @pytest.mark.asyncio
-async def test_send_mail_rejects_missing_attachment_without_leaking_path(mocker, tmp_path):
-    from eds_mcp.mail import send_mail_logic
-
+async def test_send_mail_rejects_missing_attachment_without_leaking_path(
+    mocker: Any, tmp_path: Any
+) -> None:
     bridge_call = mocker.patch("eds_mcp.mail.call_bridge_method")
     missing = tmp_path / "missing.xlsx"
 
@@ -185,61 +199,62 @@ async def test_send_mail_rejects_missing_attachment_without_leaking_path(mocker,
         "Body",
         attachment_paths=[str(missing)],
     )
+    payload = json.loads(result)
 
-    assert "missing.xlsx" in result
+    assert payload["error"]["code"] == "VALIDATION_ERROR"
+    assert "missing.xlsx" in payload["error"]["message"]
     assert str(tmp_path) not in result
     bridge_call.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_send_mail_rejects_too_many_attachments(mocker):
-    from eds_mcp.mail import send_mail_logic
-
+async def test_send_mail_rejects_too_many_attachments(mocker: Any) -> None:
     bridge_call = mocker.patch("eds_mcp.mail.call_bridge_method")
 
-    result = await send_mail_logic(
-        "acc1",
-        "to@example.test",
-        "Subject",
-        "Body",
-        attachment_paths=[f"attachment-{index}" for index in range(11)],
+    payload = json.loads(
+        await send_mail_logic(
+            "acc1",
+            "to@example.test",
+            "Subject",
+            "Body",
+            attachment_paths=[f"attachment-{index}" for index in range(11)],
+        )
     )
 
-    assert result == "Error: At most 10 attachments are allowed."
+    assert payload["error"]["code"] == "VALIDATION_ERROR"
+    assert "allowed" in payload["error"]["message"]
     bridge_call.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_send_mail_rejects_oversized_attachment(mocker, tmp_path):
-    from eds_mcp.mail import MAX_ATTACHMENT_TOTAL_BYTES, send_mail_logic
-
+async def test_send_mail_rejects_oversized_attachment(mocker: Any, tmp_path: Any) -> None:
     bridge_call = mocker.patch("eds_mcp.mail.call_bridge_method")
     attachment = tmp_path / "large.bin"
     with attachment.open("wb") as file_handle:
         file_handle.truncate(MAX_ATTACHMENT_TOTAL_BYTES + 1)
 
-    result = await send_mail_logic(
-        "acc1",
-        "to@example.test",
-        "Subject",
-        "Body",
-        attachment_paths=[str(attachment)],
+    payload = json.loads(
+        await send_mail_logic(
+            "acc1",
+            "to@example.test",
+            "Subject",
+            "Body",
+            attachment_paths=[str(attachment)],
+        )
     )
 
-    assert result == "Error: Attachments exceed the 20 MiB total size limit."
+    assert payload["error"]["code"] == "VALIDATION_ERROR"
+    assert "exceed" in payload["error"]["message"]
     bridge_call.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_send_mail_as_threaded_reply(mocker):
-    from eds_mcp.mail import send_mail_logic
-
+async def test_send_mail_as_threaded_reply(mocker: Any) -> None:
+    mocker.patch("eds_mcp.mail.get_mail_db_path", return_value=None)
     mocker.patch(
         "eds_mcp.mail.read_cached_message",
         return_value=(
-            "Message-ID: <message@example.test>\r\n"
-            "References: <root@example.test>\r\n"
-            "\r\nBody"
+            "Message-ID: <message@example.test>\r\nReferences: <root@example.test>\r\n\r\nBody"
         ),
     )
     bridge_call = mocker.patch(
@@ -247,19 +262,22 @@ async def test_send_mail_as_threaded_reply(mocker):
         return_value=(True, "queued"),
     )
 
-    result = await send_mail_logic(
-        "acc1",
-        "to@example.test",
-        "Re: Subject",
-        "Reply",
-        reply_to_message_uid="message-uid",
-        reply_to_folder="Inbox",
+    payload = json.loads(
+        await send_mail_logic(
+            "acc1",
+            "to@example.test",
+            "Re: Subject",
+            "Reply",
+            reply_to_message_uid="message-uid",
+            reply_to_folder="Inbox",
+        )
     )
 
-    assert result == "Successfully sent mail: queued"
+    assert payload["status"] == "sent"
+    assert payload["in_reply_to"] == "<message@example.test>"
     bridge_call.assert_called_once_with(
         "SendMailWithAttachments",
-        '(ssssassss)',
+        "(ssssasssss)",
         (
             "acc1",
             "to@example.test",
@@ -274,71 +292,76 @@ async def test_send_mail_as_threaded_reply(mocker):
     )
 
 
-def test_normalize_recipients():
-    from eds_mcp.mail import normalize_recipients
-
+def test_normalize_recipients() -> None:
     assert normalize_recipients(None) == ""
     assert normalize_recipients("") == ""
     assert normalize_recipients("user@example.test") == "user@example.test"
-    assert normalize_recipients("u1@example.test, u2@example.test; u3@example.test") == "u1@example.test, u2@example.test, u3@example.test"
-    assert normalize_recipients(["u1@example.test", "u2@example.test; u3@example.test"]) == "u1@example.test, u2@example.test, u3@example.test"
-    assert normalize_recipients(["  u1@example.test  ", "", "u2@example.test"]) == "u1@example.test, u2@example.test"
+    assert (
+        normalize_recipients("u1@example.test, u2@example.test; u3@example.test")
+        == "u1@example.test, u2@example.test, u3@example.test"
+    )
+    assert (
+        normalize_recipients(["u1@example.test", "u2@example.test; u3@example.test"])
+        == "u1@example.test, u2@example.test, u3@example.test"
+    )
+    assert (
+        normalize_recipients(["  u1@example.test  ", "", "u2@example.test"])
+        == "u1@example.test, u2@example.test"
+    )
 
     with pytest.raises(ValueError):
-        normalize_recipients(123)  # type: ignore
+        normalize_recipients(123)  # type: ignore[arg-type]
 
     with pytest.raises(ValueError):
-        normalize_recipients(["valid@example.test", 456])  # type: ignore
+        normalize_recipients(["valid@example.test", 456])  # type: ignore[list-item]
 
 
 @pytest.mark.asyncio
-async def test_send_mail_with_cc_bcc_and_multiple_to(mocker):
-    from eds_mcp.mail import send_mail_logic
+async def test_send_mail_with_cc_bcc_and_multiple_to(mock_dbus_proxy: MagicMock) -> None:
+    mock_result = MagicMock()
+    mock_result.unpack.return_value = (True, "queued")
+    mock_dbus_proxy.call_sync.return_value = mock_result
 
-    bridge_call = mocker.patch(
-        "eds_mcp.mail.call_bridge_method",
-        return_value=(True, "queued"),
+    payload = json.loads(
+        await send_mail_logic(
+            account_uid="acc1",
+            to=["to1@example.test", "to2@example.test; to3@example.test"],
+            subject="Multi test",
+            body="Body",
+            cc="cc1@example.test, cc2@example.test",
+            bcc=["bcc1@example.test"],
+        )
     )
 
-    result = await send_mail_logic(
-        account_uid="acc1",
-        to=["to1@example.test", "to2@example.test; to3@example.test"],
-        subject="Multi test",
-        body="Body",
-        cc="cc1@example.test, cc2@example.test",
-        bcc=["bcc1@example.test"],
-    )
-
-    assert result == "Successfully sent mail: queued"
-    bridge_call.assert_called_once_with(
-        "SendMailWithAttachments",
-        '(ssssassss)',
-        (
-            "acc1",
-            "to1@example.test, to2@example.test, to3@example.test",
-            "Multi test",
-            "Body",
-            [],
-            "",
-            "",
-            "cc1@example.test, cc2@example.test",
-            "bcc1@example.test",
-        ),
+    assert payload["status"] == "sent"
+    call_args = mock_dbus_proxy.call_sync.call_args[0]
+    assert call_args[0] == "SendMailWithAttachments"
+    assert call_args[1].get_type_string() == "(ssssasssss)"
+    assert call_args[1].unpack() == (
+        "acc1",
+        "to1@example.test, to2@example.test, to3@example.test",
+        "Multi test",
+        "Body",
+        [],
+        "",
+        "",
+        "cc1@example.test, cc2@example.test",
+        "bcc1@example.test",
     )
 
 
 @pytest.mark.asyncio
-async def test_send_mail_validation_errors(mocker):
-    from eds_mcp.mail import send_mail_logic
-
+async def test_send_mail_validation_errors(mocker: Any) -> None:
     bridge_call = mocker.patch("eds_mcp.mail.call_bridge_method")
 
-    res = await send_mail_logic("acc1", "", "Subject", "Body")
-    assert "Error: At least one 'to' recipient is required." in res
+    res1 = json.loads(await send_mail_logic("acc1", "", "Subject", "Body"))
+    assert res1["error"]["code"] == "VALIDATION_ERROR"
+    assert "required" in res1["error"]["message"]
 
-    res = await send_mail_logic("acc1", ["   "], "Subject", "Body")
-    assert "Error: At least one 'to' recipient is required." in res
+    res2 = json.loads(await send_mail_logic("acc1", ["   "], "Subject", "Body"))
+    assert res2["error"]["code"] == "VALIDATION_ERROR"
 
-    res = await send_mail_logic("acc1", 123, "Subject", "Body")  # type: ignore
-    assert "Error: Invalid recipients type" in res
+    res3 = json.loads(await send_mail_logic("acc1", 123, "Subject", "Body"))  # type: ignore[arg-type]
+    assert res3["error"]["code"] == "VALIDATION_ERROR"
+    assert "Invalid recipients type" in res3["error"]["message"]
     bridge_call.assert_not_called()
