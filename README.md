@@ -158,6 +158,16 @@ The server only discovers enabled EDS sources.
 Open Evolution (with the bridge installed) so uncached items fetch on demand, or
 sync the folder in Evolution for offline cache access.
 
+### The server exits with "Connection closed" on the first tool call
+
+A segfault in `camel_provider_load` happens when the EDS client libraries and
+the installed Camel provider plugins come from different EDS releases (for
+example 3.62 `libcamel-1.2.so.68` next to providers built for 3.56
+`libcamel-1.2.so.64`). `eds-mcp` does not use Camel providers, so it points
+`EDS_CAMEL_PROVIDER_DIR` at an empty directory under
+`$XDG_CACHE_HOME/eds-mcp/` by default. Set `EDS_CAMEL_PROVIDER_DIR` yourself
+to override it.
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, module layout,
