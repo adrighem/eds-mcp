@@ -93,16 +93,17 @@ def setup_environment() -> None:
         # but we ensure it's available for check_gi_dependencies
         pass
 
-    # 4. Set CAMEL_PROVIDER_DIR if it's in the expected location
-    camel_provider_paths = [
-        "/usr/lib/evolution-data-server/camel-providers",
-        "/usr/lib/x86_64-linux-gnu/evolution-data-server/camel-providers",
-        "/usr/lib64/evolution-data-server/camel-providers",
-    ]
-    for path in camel_provider_paths:
-        if os.path.exists(path):
-            os.environ["CAMEL_PROVIDER_DIR"] = path
-            break
+    # 4. Point libcamel at an empty provider dir. eds-mcp never opens Camel
+    # stores or transports (mail comes from the SQLite cache and the D-Bus
+    # bridge), but libedataserver loads every provider plugin when it builds
+    # ESource objects. Providers built for another libcamel ABI (e.g. 3.56
+    # providers next to 3.62 client libs) then segfault the process.
+    # Respect an explicit EDS_CAMEL_PROVIDER_DIR override.
+    if "EDS_CAMEL_PROVIDER_DIR" not in os.environ:
+        cache_home = os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache")
+        empty_provider_dir = os.path.join(cache_home, "eds-mcp", "empty-camel-providers")
+        os.makedirs(empty_provider_dir, exist_ok=True)
+        os.environ["EDS_CAMEL_PROVIDER_DIR"] = empty_provider_dir
 
     # 5. Configure basic logging before optional Camel provider init
     logging.basicConfig(
